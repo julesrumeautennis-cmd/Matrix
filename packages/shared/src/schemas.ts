@@ -35,8 +35,11 @@ export const ProfileSchema = z.object({
     sport: score0to10,
     alcohol: score0to10,
     sleep: score0to10,
+    heightCm: z.number().min(80).max(250).optional(),
+    weightKg: z.number().min(25).max(350).optional(),
+    sugar: z.number().min(0).max(30).optional(),
   }),
-  relatives: z.array(RelativeSchema).min(1).max(4),
+  relatives: z.array(RelativeSchema).min(1).max(5),
   bustUrl: z.string().url().optional(),
   photoUrl: z.string().optional(),
   portraits: z.array(z.string()).max(3).optional(),
@@ -90,6 +93,24 @@ export const EulogySchema = z.object({
   sentiment: z.number().min(-1).max(1),
 });
 
+export const LifeOutcomeSchema = z.object({
+  marriage_age: z.number().int().nullable(),
+  divorce_age: z.number().int().nullable(),
+  affair: z.enum(['protagonist', 'spouse', 'none']).optional(),
+  children: z.array(
+    z.object({
+      kind: z.enum(['daughter', 'son']),
+      birth_age: z.number().int(),
+      bond: z.enum(['close', 'distant']),
+    }),
+  ),
+  wellbeing: z.enum(['fulfilled', 'content', 'restless']),
+  health_event: z.string(),
+  health_age: z.number().int(),
+  turning_point: z.string(),
+});
+export type LifeOutcome = z.infer<typeof LifeOutcomeSchema>;
+
 export const RunSchema = z
   .object({
     run_id: z.string().min(1),
@@ -100,6 +121,7 @@ export const RunSchema = z
     years: z.array(YearEventSchema),
     eulogies: z.array(EulogySchema),
     ending_cluster: z.string().optional(),
+    life_outcome: LifeOutcomeSchema.optional(),
   })
   .superRefine((run, ctx) => {
     // Untagged screenings predate chapter provenance and can still be opened from storage.

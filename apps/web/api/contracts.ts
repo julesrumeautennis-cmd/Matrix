@@ -1,3 +1,5 @@
+import { json } from './http';
+export { json } from './http';
 import { ProfileSchema, RunSchema, RunSummarySchema } from '@eulogy/shared';
 import { z } from 'zod';
 
@@ -24,7 +26,7 @@ export const InputProfile = ProfileSchema.extend({
       }),
     )
     .min(1)
-    .max(4),
+    .max(5),
   photoUrl: z.string().url().max(6000).optional(),
 }).refine(
   (p) =>
@@ -37,12 +39,6 @@ export const Manifest = z.object({
   summary: RunSummarySchema,
 });
 export const Batch = Manifest.extend({ runs: z.array(RunSchema).length(12) });
-export function json(value: unknown, status = 200, headers: Record<string, string> = {}) {
-  return Response.json(value, {
-    status,
-    headers: { 'Cache-Control': 'private, no-store', ...headers },
-  });
-}
 export function checkRequest(request: Request, method: string, keys: string[]) {
   if (request.method !== method)
     return json({ error: 'Method not allowed.' }, 405, { Allow: method });
