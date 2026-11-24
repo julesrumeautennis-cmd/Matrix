@@ -1,25 +1,38 @@
 #!/usr/bin/env bash
-# Usage: scripts/ship.sh "<commit message>"
-# Commits everything, pushes, opens a PR and enables squash auto-merge.
+# Usage: scripts/ship.sh "<commit and PR title>"
 set -euo pipefail
-MSG="${1:?usage: scripts/ship.sh \"<commit message>\"}"
-
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$BRANCH" = "main" ]; then
-  echo "Refusing to ship from main. Use scripts/new-branch.sh <name> first." >&2
+message="${1:?supply the commit and PR title}"
+branch="$(git branch --show-current)"
+if [[ -z "$branch" || "$branch" == main ]]; then
+  echo "Ship a feature branch." >&2
   exit 1
 fi
 
+npm run lint && npm run typecheck && npm test && npm run build || exit 1
 git add -A
-if git diff --cached --quiet; then
-  echo "Nothing to commit; pushing anyway."
-else
-  git commit -m "$MSG"
+git diff --cached --quiet || git commit -m "$message"
+head_sha="$(git rev-parse HEAD)"
+git push -u origin "$branch"
+number="$(gh pr view "$branch" --json number --jq .number 2>/dev/null || true)"
+if [[ -z "$number" ]]; then
+  gh pr create --base main --head "$branch" --fill
+  number="$(gh pr view "$branch" --json number --jq .number)"
 fi
-git push -u origin "$BRANCH"
 
-if ! gh pr view --json number >/dev/null 2>&1; then
-  gh pr create --fill
-fi
-gh pr merge --auto --squash
-echo "PR opened; will squash-merge automatically when 'ci' passes."
+# Private repositories on GitHub Free can merge immediately with --auto.
+# Wait for the named check on this exact commit before requesting any merge.
+repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+for ((attempt=0; attempt<120; attempt++)); do
+  check="$(gh api "repos/$repo/commits/$head_sha/check-runs" --jq '[.check_runs[] | select(.name=="ci" and .app.slug=="github-actions")] | sort_by(.id) | last | if . == null then "pending" else (.conclusion // .status) end')"
+  case "$check" in
+    success)
+      git fetch -q origin main
+      git merge-base --is-ancestor origin/main "$head_sha" || { echo "Rebase on origin/main and run ship again." >&2; exit 1; }
+      gh pr merge "$number" --squash --match-head-commit "$head_sha"
+      exit 0 ;;
+    pending|queued|in_progress|waiting|requested) sleep 5 ;;
+    *) echo "ci finished with $check" >&2; exit 1 ;;
+  esac
+done
+echo "No successful ci check for $head_sha yet." >&2
+exit 1

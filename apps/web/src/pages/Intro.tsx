@@ -1,46 +1,61 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import './intro.css';
+import { Header, Orbit } from '../matrix/Chrome';
 const lines = ['You were born.', "You don't remember it.", "Let's skip to now."];
 export default function Intro() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   useEffect(() => {
-    const times = [800, 2800, 4800].map((ms, i) => setTimeout(() => setStep(i + 1), ms));
-    return () => times.forEach(clearTimeout);
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timers = [2700, 5300].map((ms, i) => setTimeout(() => setStep(i + 1), ms));
+    return () => timers.forEach(clearTimeout);
   }, []);
   function enter() {
     try {
-      const ac = new AudioContext();
-      const osc = ac.createOscillator(),
-        gain = ac.createGain();
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator(),
+        gain = ctx.createGain();
       osc.frequency.value = 54;
-      gain.gain.setValueAtTime(0.001, ac.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.18, ac.currentTime + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.28);
-      osc.connect(gain).connect(ac.destination);
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.09, ctx.currentTime + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+      osc.connect(gain).connect(ctx.destination);
       osc.start();
-      osc.stop(ac.currentTime + 0.3);
-      osc.onended = () => {
-        void ac.close();
-      };
+      osc.stop(ctx.currentTime + 0.3);
+      osc.onended = () => void ctx.close();
     } catch {
-      /* A silent opening also supports autoplay restrictions. */
+      /* Silent opening. */
     }
     navigate('/you');
   }
   return (
-    <main className="opening">
-      <header>Eulogy</header>
-      <div className="light" aria-hidden="true" />
-      <div className="opening-copy">
-        <h1 aria-live="polite" key={step}>
-          {step ? lines[step - 1] : 'Eulogy'}
-        </h1>
-        <button onClick={enter}>
-          Tell us where you are <span aria-hidden="true">→</span>
-        </button>
-      </div>
-    </main>
+    <div className="mx mx-opening">
+      <Header />
+      <main className="mx-opening-main">
+        <div className="mx-opening-copy">
+          <div className="mx-kicker">
+            <i />A personal life simulation
+          </div>
+          <h1 key={step}>{lines[step]}</h1>
+          <p>
+            You and the five people closest to you, across a hundred possible futures. Which life
+            will you recognize?
+          </p>
+          <button className="mx-primary" onClick={enter}>
+            Begin your simulation <span aria-hidden="true">→</span>
+          </button>
+        </div>
+        <figure className="mx-orbit-frame">
+          <Orbit />
+          <figcaption>
+            <span className="mx-live-dot" /> Initial conditions <span>6 agents / 100 lives</span>
+          </figcaption>
+        </figure>
+      </main>
+      <footer className="mx-opening-footer">
+        <span>Matrix</span>
+        <span>Life simulation experiment</span>
+      </footer>
+    </div>
   );
 }
