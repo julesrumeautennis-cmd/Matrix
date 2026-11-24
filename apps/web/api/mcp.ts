@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { exampleThreads, SourceSchema } from '../../../packages/shared/src/conversations';
+import { loadWebEvidence } from './webEvidence';
 import { loadReference } from './reference';
 import { json } from './http';
 
@@ -20,6 +21,12 @@ const referenceTool = {
     'Read a US population reference from a configured Nexla Nexset, the World Bank feed, or its dated release.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true },
+};
+const webTool = {
+  ...referenceTool,
+  name: 'read_public_web_evidence',
+  description:
+    'Extract published US marriage and divorce rates from the CDC page or its configured Nexla web-data Nexset. Returns year, coverage, URL and actual retrieval provider.',
 };
 const tool = {
   name: 'list_conversations',
@@ -70,7 +77,7 @@ export async function mcp(request: Request): Promise<Response> {
       serverInfo: { name: 'matrix-sample-archive', version: '1.0.0' },
     });
   if (method === 'ping') return reply({});
-  if (method === 'tools/list') return reply({ tools: [tool, referenceTool] });
+  if (method === 'tools/list') return reply({ tools: [tool, referenceTool, webTool] });
   if (method !== 'tools/call') return error(-32601, 'Unknown method');
   if (
     z
@@ -84,6 +91,20 @@ export async function mcp(request: Request): Promise<Response> {
     return reply({
       content: [{ type: 'text', text: JSON.stringify(reference) }],
       structuredContent: { reference },
+    });
+  }
+  if (
+    z
+      .object({
+        name: z.literal('read_public_web_evidence'),
+        arguments: z.object({}).strict().optional(),
+      })
+      .safeParse(params).success
+  ) {
+    const evidence = await loadWebEvidence();
+    return reply({
+      content: [{ type: 'text', text: JSON.stringify(evidence) }],
+      structuredContent: { evidence },
     });
   }
   const input = call.safeParse(params);

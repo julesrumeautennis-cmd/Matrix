@@ -230,6 +230,16 @@ function Explorer() {
             {recipe.reference.provider} ↗
           </a>
         </p>
+        {recipe.webEvidence && (
+          <p>
+            US marriage rate in {recipe.webEvidence.year}: {recipe.webEvidence.marriageRate} per
+            1,000 people. The divorce rate was {recipe.webEvidence.divorceRate} per 1,000 in{' '}
+            {recipe.webEvidence.divorceArea}.{' '}
+            <a href={recipe.webEvidence.sourceUrl} target="_blank" rel="noreferrer">
+              {recipe.webEvidence.provider} ↗
+            </a>
+          </p>
+        )}
         <ul>
           {recipe.agents.map((a, i) => (
             <li key={a.id}>
