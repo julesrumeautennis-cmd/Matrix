@@ -12,7 +12,7 @@ import { Canvas } from '@react-three/fiber';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { ChapelGuest } from '../data/funeralCast';
 import ChapelScene from '../components/ChapelScene';
-import { type Shot } from '../components/chapelBlocking';
+import { seatsPerView, type Shot } from '../components/chapelBlocking';
 import Ledger from '../components/Ledger';
 import PrivateFeed from '../components/PrivateFeed';
 import { screeningQuery } from '../data/screening';
@@ -93,6 +93,7 @@ function Service({
   const [position, setPosition] = useState(0);
   const [manual, setManual] = useState<Shot | null>(null);
   const [visited, setVisited] = useState<string>();
+  const [seatingPage, setSeatingPage] = useState(0);
   const [projectionReady, setProjectionReady] = useState(false);
   const projection = useRef<HTMLDivElement>(null);
   const ready = useCallback(() => setProjectionReady(true), []);
@@ -123,6 +124,13 @@ function Service({
   const focus = isPlaying
     ? (cue.focusId ?? (state.beat === 'silence' ? cue.relativeId : undefined))
     : undefined;
+  const cameraFocus = manual === 'front_row' ? visited : focus;
+  const focusedIndex = guests.findIndex((person) => person.id === cameraFocus);
+  const onStage = isPlaying && witnessIndex >= 0 ? witnessIndex : focusedIndex;
+  const lastPage = Math.floor((guests.length - 1) / seatsPerView);
+  const page = onStage >= 0 ? Math.floor(onStage / seatsPerView) : Math.min(seatingPage, lastPage);
+  const firstGuest = page * seatsPerView;
+  const visibleGuests = guests.slice(firstGuest, firstGuest + seatsPerView);
   const shot =
     manual ??
     (!isPlaying
@@ -143,10 +151,17 @@ function Service({
     setPosition((position + 1) % playlist.length);
     setManual(null);
     setVisited(undefined);
+    setSeatingPage(0);
     setSelectedChapter(null);
   }
   function nextVoice() {
     player.play(state.index >= serviceLength ? serviceLength - 1 : state.index + 1);
+  }
+  function visitSeats(nextPage: number) {
+    player.stop();
+    setVisited(undefined);
+    setManual('wide');
+    setSeatingPage(nextPage);
   }
   const sampleLabel = summary.generation?.scripted
     ? 'Dramatized screening'
@@ -171,12 +186,13 @@ function Service({
               <Suspense fallback={null}>
                 <ChapelScene
                   profile={profile}
-                  guests={guests}
+                  guests={visibleGuests}
+                  firstGuest={firstGuest}
                   onReady={ready}
                   speaker={isPlaying && cue.speaks ? cue.relativeId : undefined}
                   priestSpeaking={isSpeaking && cue.kind !== 'witness'}
                   tearful={!!cue.tearful}
-                  focus={manual === 'front_row' ? visited : focus}
+                  focus={cameraFocus}
                   beat={state.beat}
                   shot={shot}
                   reduced={reduced}
@@ -314,63 +330,88 @@ function Service({
           </div>
           <div className="record-details">
             {tab === 'Agents' ? (
-              <ol className="agent-list" aria-label="Service cast">
-                {[undefined, ...guests].map((guest, n) => {
-                  const i = guest ? cues.findIndex((line) => line.relativeId === guest.id) : 0;
-                  const line = cues[i];
-                  const active =
-                    isPlaying && (guest ? cue.relativeId === guest.id : cue.kind !== 'witness');
-                  const person = guest?.name ?? 'The priest';
-                  const bond =
-                    guest &&
-                    run.years.at(-1)?.relative_states.find((s) => s.relative_id === guest.id)
-                      ?.relationship_score;
-                  return (
-                    <li key={guest ? 'guest-' + guest.id : 'officiant'}>
-                      <button
-                        disabled={!projectionReady}
-                        aria-label={(line?.speaks ? 'Hear ' : 'Visit ') + person}
-                        aria-current={active ? 'step' : undefined}
-                        onClick={() => {
-                          if (matchMedia('(max-width: 800px)').matches) {
-                            projection.current?.scrollIntoView({
-                              block: 'start',
-                              behavior: reduced ? 'instant' : 'smooth',
-                            });
-                          }
-                          if (i < 0) {
-                            setVisited(guest?.id);
-                            setManual('front_row');
-                          } else {
-                            setManual(null);
-                            player.play(i, true);
-                          }
-                        }}
-                      >
-                        <span className="agent-code">{guest ? 'SEAT ' + pad(n) : 'PULPIT'}</span>
-                        <span className="agent-person">
-                          <strong>{person}</strong>
-                          <small>
-                            {guest ? relation(guest, profile.id) : 'Officiant'}
-                            {bond !== undefined ? ' · Bond ' + bond : ''}
-                          </small>
-                        </span>
-                        <span className="agent-state">
-                          {active && isSpeaking
-                            ? 'Speaking'
-                            : !guest
-                              ? 'Presides'
-                              : !line?.speaks
-                                ? 'Silent'
-                                : i < serviceLength
-                                  ? 'Testimony'
-                                  : 'Farewell'}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ol>
+              <>
+                {lastPage > 0 && (
+                  <nav className="pew-pages" aria-label="Seating sections">
+                    <button
+                      aria-label="Previous seats"
+                      disabled={page === 0}
+                      onClick={() => visitSeats(page - 1)}
+                    >
+                      ←
+                    </button>
+                    <span>
+                      Seats {firstGuest + 1}–{firstGuest + visibleGuests.length} of {guests.length}
+                    </span>
+                    <button
+                      aria-label="Next seats"
+                      disabled={page === lastPage}
+                      onClick={() => visitSeats(page + 1)}
+                    >
+                      →
+                    </button>
+                  </nav>
+                )}
+                <ol className="agent-list" aria-label="Service cast">
+                  {[undefined, ...visibleGuests].map((guest, n) => {
+                    const i = guest ? cues.findIndex((line) => line.relativeId === guest.id) : 0;
+                    const line = cues[i];
+                    const active =
+                      isPlaying && (guest ? cue.relativeId === guest.id : cue.kind !== 'witness');
+                    const person = guest?.name ?? 'The priest';
+                    const bond =
+                      guest &&
+                      run.years.at(-1)?.relative_states.find((s) => s.relative_id === guest.id)
+                        ?.relationship_score;
+                    return (
+                      <li key={guest ? 'guest-' + guest.id : 'officiant'}>
+                        <button
+                          disabled={!projectionReady}
+                          aria-label={(line?.speaks ? 'Hear ' : 'Visit ') + person}
+                          aria-current={active ? 'step' : undefined}
+                          onClick={() => {
+                            if (matchMedia('(max-width: 800px)').matches) {
+                              projection.current?.scrollIntoView({
+                                block: 'start',
+                                behavior: reduced ? 'instant' : 'smooth',
+                              });
+                            }
+                            if (i < 0) {
+                              setVisited(guest?.id);
+                              setManual('front_row');
+                            } else {
+                              setManual(null);
+                              player.play(i, true);
+                            }
+                          }}
+                        >
+                          <span className="agent-code">
+                            {guest ? 'SEAT ' + pad(firstGuest + n) : 'PULPIT'}
+                          </span>
+                          <span className="agent-person">
+                            <strong>{person}</strong>
+                            <small>
+                              {guest ? relation(guest, profile.id) : 'Officiant'}
+                              {bond !== undefined ? ' · Bond ' + bond : ''}
+                            </small>
+                          </span>
+                          <span className="agent-state">
+                            {active && isSpeaking
+                              ? 'Speaking'
+                              : !guest
+                                ? 'Presides'
+                                : !line?.speaks
+                                  ? 'Silent'
+                                  : i < serviceLength
+                                    ? 'Testimony'
+                                    : 'Farewell'}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </>
             ) : (
               <>
                 {run.years.length > 0 && (

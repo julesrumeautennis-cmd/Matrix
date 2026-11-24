@@ -3,14 +3,13 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { AnimationMixer, Group, MathUtils, Mesh, Vector3 } from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import type { ChapelGuest } from '../data/funeralCast';
+import { chapelModel, type ChapelGuest } from '../data/funeralCast';
 import { costumeAnchor, Tears, Vestments } from './ChapelCostume';
 import {
-  aisleRoutes,
+  chapelSeat,
   lectern,
   presiderAside,
   riseSeconds,
-  seatPositions,
   sitSeconds,
   turnSeconds,
   type Beat,
@@ -40,18 +39,6 @@ type Props = {
   level: () => number | null;
 };
 
-const julesCast: Record<string, string> = {
-  maman: 'mother',
-  papa: 'father',
-  ines: 'sister',
-  theo: 'friend',
-};
-const louisCast: Record<string, string> = {
-  camille: 'mourner',
-  lea: 'sister',
-  anne: 'mother',
-  jules: 'friend',
-};
 export function ChapelActor({
   profileId,
   relative,
@@ -64,13 +51,7 @@ export function ChapelActor({
   level,
 }: Props) {
   const presider = !relative;
-  const cast = profileId === 'jules-film' ? julesCast : profileId === 'louis-demo' ? louisCast : {};
-  const model = !relative
-    ? 'visitor'
-    : relative.relation === 'partner'
-      ? 'mourner'
-      : (cast[relative.id] ??
-        ['mother', 'sister', 'friend', 'father', 'visitor', 'mourner'][index]!);
+  const model = chapelModel(profileId, relative, index);
   const asset = model === 'mourner' || model === 'visitor' ? model : 'cast/' + model;
   const { scene } = useGLTF('/avatars/' + asset + '.glb');
   const { animations } = useGLTF('/avatars/motion/' + model + '.glb');
@@ -145,8 +126,7 @@ export function ChapelActor({
     bow = useRef(0);
   const point = useMemo(() => new Vector3(), []),
     tangent = useMemo(() => new Vector3(), []);
-  const route = aisleRoutes[index]!;
-  const seat = seatPositions[index]!;
+  const seat = chapelSeat(index);
   useFrame(({ clock }, dt) => {
     const actor = root.current;
     if (!actor) return;
@@ -172,7 +152,7 @@ export function ChapelActor({
       set('speak', idleTime * 0.91, weight * gesture);
     }
     let yaw = Math.PI;
-    point.set(seat, 0, 1.24);
+    point.copy(seat.position);
     if (presider) {
       const target = yieldLectern ? 1 : 0;
       const old = aside.current;
@@ -192,27 +172,27 @@ export function ChapelActor({
       set('stand', t, mix, false);
     } else if (
       state === 'approach' ||
-      (state === 'return' && !reduced && t < turnSeconds + route.travel)
+      (state === 'return' && !reduced && t < turnSeconds + seat.travel)
     ) {
       const forward = state === 'approach';
-      const walkTime = MathUtils.clamp(t - (forward ? riseSeconds : turnSeconds), 0, route.travel);
-      const u = walkTime / route.travel;
+      const walkTime = MathUtils.clamp(t - (forward ? riseSeconds : turnSeconds), 0, seat.travel);
+      const u = walkTime / seat.travel;
       const distance = forward ? u : 1 - u;
-      route.path.getPointAt(distance, point);
-      route.path.getTangentAt(distance, tangent);
+      seat.path.getPointAt(distance, point);
+      seat.path.getTangentAt(distance, tangent);
       if (!forward) tangent.negate();
       const angle = Math.atan2(tangent.x, tangent.z);
       yaw = angle;
-      const blend = Math.min(smooth(walkTime / 0.22), smooth((route.travel - walkTime) / 0.25));
+      const blend = Math.min(smooth(walkTime / 0.22), smooth((seat.travel - walkTime) / 0.25));
       set('walk', walkTime * 1.22 + index * 0.11, blend);
       standing(1 - blend);
       if (forward && u === 1)
         yaw =
           angle +
-          (nearestAngle(angle, 0) - angle) * smooth((t - riseSeconds - route.travel) / turnSeconds);
+          (nearestAngle(angle, 0) - angle) * smooth((t - riseSeconds - seat.travel) / turnSeconds);
       if (!forward && t < turnSeconds) yaw = nearestAngle(0, angle) * smooth(t / turnSeconds);
     } else if (!reduced && state === 'return') {
-      const sitTime = t - turnSeconds - route.travel,
+      const sitTime = t - turnSeconds - seat.travel,
         mix = smooth((sitTime - sitSeconds + 0.22) / 0.22);
       set('sit', sitTime, 1 - mix, false);
       set('seated', idleTime, mix);
@@ -246,7 +226,8 @@ export function ChapelActor({
   return (
     <group
       ref={root}
-      position={presider ? lectern : [seat, 0, 1.24]}
+      name={relative ? 'Guest ' + relative.id : 'Priest'}
+      position={presider ? lectern : seat.position}
       rotation={[0, presider ? 0 : Math.PI, 0]}
     >
       <primitive object={rig.body} dispose={null} />
