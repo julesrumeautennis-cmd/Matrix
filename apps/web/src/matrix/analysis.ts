@@ -3,7 +3,6 @@ import type { Profile } from '@eulogy/shared';
 import {
   exampleThreads,
   SourceSchema,
-  ThreadsSchema,
   type Source,
   type SampleThread,
 } from '../../../../packages/shared/src/conversations';
@@ -13,6 +12,7 @@ import {
   cdcRelease,
   WebEvidenceSchema,
 } from '../../../../packages/shared/src/reference';
+import { callTool, openMcp, readArchive, type ReportTrace } from './mcpClient';
 import { initialProfile, MatrixProfile } from './profile';
 
 export const sources: Record<Source, { name: string; color: string; example: string }> = {
@@ -109,6 +109,7 @@ export type Recipe = z.infer<typeof RecipeSchema>;
 export function assignAgents(
   profile: Profile,
   archives: { source: Source; threads: SampleThread[] }[],
+  report?: ReportTrace,
 ): Persona[] {
   return profile.relatives.map((person, i) => {
     const excerpts = archives.flatMap(({ source, threads }) =>
@@ -116,6 +117,11 @@ export function assignAgents(
         .filter((t) => t.seat === i)
         .flatMap((t) => t.messages.map((text) => ({ source, text }))),
     );
+    report?.({
+      operation: 'agent.bind',
+      detail: person.name + ' · matching relationship notes · excerpts=' + excerpts.length,
+      agent: { id: person.id, state: 'connecting' },
+    });
     const notes = [person.relationshipState, person.grievance].join(' ');
     const ranked = voices
       .map((v) => {
@@ -130,6 +136,22 @@ export function assignAgents(
     const voice = ranked[0]!.score
       ? ranked[0]!
       : { ...voices[i % voices.length]!, example: excerpts[0] };
+    if (voice.example)
+      report?.({
+        operation: 'agent.evidence',
+        detail:
+          person.name +
+          ' · ' +
+          sources[voice.example.source].name +
+          ' · “' +
+          voice.example.text +
+          '”',
+      });
+    report?.({
+      operation: 'agent.connect',
+      detail: person.name + ' · ' + voice.label + ' · bonding=' + voice.bonding.toFixed(2),
+      agent: { id: person.id, state: 'connected' },
+    });
     return {
       id: person.id,
       label: voice.label,
@@ -140,112 +162,140 @@ export function assignAgents(
     };
   });
 }
-let requestNo = 0;
-async function rpc(method: string, params: unknown, signal: AbortSignal, notify = false) {
-  const id = ++requestNo;
-  const response = await fetch('/api/mcp', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
-      'MCP-Protocol-Version': '2025-06-18',
-    },
-    signal,
-    body: JSON.stringify({ jsonrpc: '2.0', ...(notify ? {} : { id }), method, params }),
-  });
-  if (!response.ok) throw Error('MCP response unavailable');
-  if (notify) return;
-  return z
-    .object({ jsonrpc: z.literal('2.0'), id: z.literal(id), result: z.unknown() })
-    .parse(await response.json()).result;
-}
 export async function analyze(
   profile: Profile,
   selected: Source[],
   signal: AbortSignal,
+  report: ReportTrace = () => {},
 ): Promise<Recipe> {
   const templates = sampleTemplates(profile);
-  let archives = selected.map((source) => ({ source, threads: exampleThreads(source, templates) }));
-  let reference = bankRelease;
-  let webEvidence = cdcRelease;
-  let transport: Recipe['transport'] = 'Local archive';
+  const emit: ReportTrace = (event) => {
+    if (!signal.aborted) report(event);
+  };
+  emit({
+    operation: 'profile.load',
+    detail:
+      profile.name +
+      ' · ' +
+      templates.length +
+      ' relatives · ' +
+      selected.length +
+      ' sample sources',
+  });
+  const timed = AbortSignal.any([signal, AbortSignal.timeout(11500)]);
+  let tools: string[] = [];
+  let usedMcp = false;
   try {
-    const timed = AbortSignal.any([signal, AbortSignal.timeout(11500)]);
-    z.object({ protocolVersion: z.string() }).parse(
-      await rpc(
-        'initialize',
-        {
-          protocolVersion: '2025-06-18',
-          capabilities: {},
-          clientInfo: { name: 'Matrix browser', version: '1.0' },
-        },
-        timed,
-      ),
-    );
-    await rpc('notifications/initialized', {}, timed, true);
-    const list = z
-      .object({ tools: z.array(z.object({ name: z.string() })) })
-      .parse(await rpc('tools/list', {}, timed));
-    if (
-      !['read_population_reference', 'list_conversations'].every((name) =>
-        list.tools.some((t) => t.name === name),
-      )
-    )
-      throw Error('Missing MCP tools');
-    const [publicData, evidence, threads] = await Promise.all([
-      rpc('tools/call', { name: 'read_population_reference', arguments: {} }, timed),
-      list.tools.some((t) => t.name === 'read_public_web_evidence')
-        ? rpc('tools/call', { name: 'read_public_web_evidence', arguments: {} }, timed)
-            .then(
-              (raw) =>
-                z
-                  .object({ structuredContent: z.object({ evidence: WebEvidenceSchema }) })
-                  .parse(raw).structuredContent.evidence,
-            )
-            .catch(() => cdcRelease)
-        : Promise.resolve(cdcRelease),
-      Promise.all(
-        selected.map(async (source) => {
-          const data = await rpc(
-            'tools/call',
-            { name: 'list_conversations', arguments: { source, templates } },
-            timed,
-          );
-          return {
-            source,
-            threads: z
-              .object({
-                structuredContent: z.object({
-                  threads: ThreadsSchema.refine(
-                    (rows) =>
-                      rows.length === templates.length && rows.every((row, i) => row.seat === i),
-                  ),
-                }),
-              })
-              .parse(data).structuredContent.threads,
-          };
-        }),
-      ),
-    ]);
-    reference = z
-      .object({ structuredContent: z.object({ reference: ReferenceSchema }) })
-      .parse(publicData).structuredContent.reference;
-    archives = threads;
-    webEvidence = evidence;
-    transport = 'MCP';
+    tools = (await openMcp(timed, emit)).tools;
   } catch {
-    if (signal.aborted) throw signal.reason;
+    signal.throwIfAborted();
+    emit({
+      operation: 'transport.local',
+      detail: 'MCP session unavailable · opening bundled samples and reference releases',
+    });
   }
-  return RecipeSchema.parse({
+
+  async function read<T>(
+    name: string,
+    readRemote: () => Promise<T>,
+    local: () => T,
+    label: string,
+  ): Promise<T> {
+    const started = performance.now();
+    if (tools.includes(name)) {
+      emit({ operation: 'tools/call', detail: name + ' · ' + label });
+      try {
+        const value = await readRemote();
+        signal.throwIfAborted();
+        usedMcp = true;
+        emit({
+          operation: 'schema.valid',
+          detail: name + ' · ' + label,
+          durationMs: performance.now() - started,
+        });
+        return value;
+      } catch {
+        signal.throwIfAborted();
+      }
+    }
+    emit({ operation: 'sample.local', detail: label + ' · bundled copy selected' });
+    return local();
+  }
+  const [reference, webEvidence, archives] = await Promise.all([
+    read(
+      'read_population_reference',
+      async () =>
+        z
+          .object({ reference: ReferenceSchema })
+          .parse(await callTool('read_population_reference', {}, timed)).reference,
+      () => bankRelease,
+      'US life expectancy',
+    ),
+    read(
+      'read_public_web_evidence',
+      async () =>
+        z
+          .object({ evidence: WebEvidenceSchema })
+          .parse(await callTool('read_public_web_evidence', {}, timed)).evidence,
+      () => cdcRelease,
+      'US marriage and divorce rates',
+    ),
+    Promise.all(
+      selected.map(async (source) => {
+        const threads = await read(
+          'list_conversations',
+          () => readArchive(source, templates, timed),
+          () => exampleThreads(source, templates),
+          sources[source].name,
+        );
+        const excerpts = threads.reduce((sum, thread) => sum + thread.messages.length, 0);
+        emit({
+          operation: 'archive.index',
+          detail: sources[source].name + ' · threads=' + threads.length + ' · excerpts=' + excerpts,
+        });
+        return { source, threads };
+      }),
+    ),
+  ]);
+  signal.throwIfAborted();
+  emit({
+    operation: 'reference.lifespan',
+    detail:
+      reference.provider +
+      ' · ' +
+      reference.year +
+      ' · ' +
+      reference.lifeExpectancy.toFixed(2) +
+      ' years',
+  });
+  emit({
+    operation: 'reference.family',
+    detail:
+      webEvidence.provider +
+      ' · ' +
+      webEvidence.year +
+      ' · ' +
+      webEvidence.marriageRate +
+      ' marriages and ' +
+      webEvidence.divorceRate +
+      ' divorces per 1,000',
+  });
+  const agents = assignAgents(profile, archives, emit);
+  const recipe = RecipeSchema.parse({
     version: 1,
     profile,
     sources: selected,
-    agents: assignAgents(profile, archives),
+    agents,
     reference,
     webEvidence,
-    transport,
+    transport: usedMcp ? 'MCP' : 'Local archive',
     seed: crypto.getRandomValues(new Uint32Array(1))[0],
   });
+  emit({
+    operation: 'run.prepare',
+    detail: 'seed=' + recipe.seed + ' · ' + (agents.length + 1) + ' agents ready',
+  });
+  return recipe;
 }
 export const demoRecipe: Recipe = RecipeSchema.parse({
   version: 1,

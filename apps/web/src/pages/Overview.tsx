@@ -2,23 +2,69 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { SourceSchema, type Source } from '../../../../packages/shared/src/conversations';
 import { useProfileStore } from '../store/profile';
-import { castColor, sources } from '../matrix/analysis';
+import { openMcp, readArchive } from '../matrix/mcpClient';
+import { castColor, sampleTemplates, sources } from '../matrix/analysis';
 import { Shell, Heading, Orbit, SourceIcon } from '../matrix/Chrome';
 
 function Connector({ source, close }: { source: Source; close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const { links, setLink } = useProfileStore();
+  const { profile, links, setLink } = useProfileStore();
+  const pending = useRef<AbortController | null>(null);
+  const [stage, setStage] = useState<'idle' | 'session' | 'archive' | 'verified' | 'error'>('idle');
+  const [receipt, setReceipt] = useState('');
+  const working = stage === 'session' || stage === 'archive' || stage === 'verified';
   const [value, setValue] = useState(links[source] ?? '');
   const config = sources[source];
   useEffect(() => {
     const node = dialog.current;
     node?.showModal();
-    return () => node?.close();
+    return () => {
+      pending.current?.abort();
+      node?.close();
+    };
   }, []);
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    setLink(source, value.trim() || config.example);
-    close();
+    if (pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]);
+    const pause = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+    setStage('session');
+    setReceipt('Negotiating the protocol and discovering archive tools.');
+    try {
+      const [session] = await Promise.all([openMcp(signal), pause(950)]);
+      signal.throwIfAborted();
+      setStage('archive');
+      setReceipt(session.server + ' · list_conversations');
+      const templates = sampleTemplates(profile);
+      const [threads] = await Promise.all([
+        readArchive(source, templates.length ? templates : undefined, signal),
+        pause(1050),
+      ]);
+      signal.throwIfAborted();
+      setStage('verified');
+      const excerpts = threads.reduce((sum, thread) => sum + thread.messages.length, 0);
+      setReceipt(
+        threads.length +
+          (threads.length === 1 ? ' sample thread · ' : ' sample threads · ') +
+          excerpts +
+          (excerpts === 1 ? ' excerpt verified' : ' excerpts verified'),
+      );
+      await pause(800);
+      controller.signal.throwIfAborted();
+      setLink(source, value.trim() || config.example);
+      close();
+    } catch {
+      if (!controller.signal.aborted) {
+        setStage('error');
+        setReceipt(
+          'The archive could not be verified. Retry the connection, or close to use the bundled samples.',
+        );
+      }
+    } finally {
+      pending.current = null;
+    }
   }
   return (
     <dialog
@@ -48,6 +94,7 @@ function Connector({ source, close }: { source: Source; close: () => void }) {
         <label>
           Account or archive label{' '}
           <input
+            disabled={working}
             maxLength={120}
             value={value}
             onChange={(e) => setValue(e.target.value)}
@@ -55,8 +102,29 @@ function Connector({ source, close }: { source: Source; close: () => void }) {
             autoComplete="off"
           />
         </label>
+        {stage !== 'idle' && (
+          <div className="mx-connection-status" role="status">
+            <strong>
+              {stage === 'session'
+                ? 'Opening MCP session'
+                : stage === 'archive'
+                  ? 'Reading sample archive'
+                  : stage === 'verified'
+                    ? 'Archive verified'
+                    : 'Connection unavailable'}
+            </strong>
+            <small>{receipt}</small>
+            {working && (
+              <progress
+                aria-label="Connection progress"
+                value={stage === 'session' ? 1 : stage === 'archive' ? 2 : 3}
+                max={3}
+              />
+            )}
+          </div>
+        )}
         <div className="mx-dialog-foot">
-          {links[source] && (
+          {links[source] && !working && (
             <button
               type="button"
               className="mx-text-button"
@@ -68,8 +136,17 @@ function Connector({ source, close }: { source: Source; close: () => void }) {
               Disconnect
             </button>
           )}
-          <button className="mx-primary" type="submit">
-            {value.trim() ? 'Save connection' : 'Use sample archive'} <span>→</span>
+          <button className="mx-primary" disabled={working} type="submit">
+            {working
+              ? stage === 'verified'
+                ? 'Verified'
+                : 'Connecting…'
+              : stage === 'error'
+                ? 'Retry connection'
+                : value.trim()
+                  ? 'Save connection'
+                  : 'Use sample archive'}{' '}
+            <span aria-hidden="true">→</span>
           </button>
         </div>
       </form>
