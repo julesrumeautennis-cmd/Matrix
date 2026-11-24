@@ -19,6 +19,13 @@ describe('Matrix screening', () => {
     for (const run of lives) {
       expect(RunSchema.safeParse(run).success).toBe(true);
       expect(run.eulogies).toHaveLength(5);
+      for (const chapter of run.years) {
+        expect(new Set(chapter.decisions.map((d) => d.actor)).size).toBe(6);
+        const [first, reply, subject] = chapter.private_messages;
+        expect(reply?.from).toBe(first?.to);
+        expect(reply?.to).toBe(first?.from);
+        expect(subject?.from).toBe(demoRecipe.profile.id);
+      }
       const o = run.life_outcome;
       if (o.divorce_age !== null) {
         expect(o.marriage_age).not.toBeNull();
