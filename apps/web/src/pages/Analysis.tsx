@@ -55,10 +55,18 @@ export default function Analysis() {
             ' excerpts',
         ),
         'nexla/mcp  ' +
-          (recipe.reference.provider === 'Nexla MCP'
+          (recipe.reference.provider === 'Nexla MCP' || recipe.webEvidence?.provider === 'Nexla MCP'
             ? 'live Nexset read'
             : 'demo adapter · public reference path'),
         'reference  ' + recipe.reference.provider + '  /  US ' + recipe.reference.year,
+        ...(recipe.webEvidence
+          ? [
+              'web/read  ' +
+                recipe.webEvidence.provider +
+                '  /  marriage + divorce, ' +
+                recipe.webEvidence.year,
+            ]
+          : []),
         'cohort  ' + cohort + '  /  ' + detailed.length + ' fictional lives',
         'complete  5 character profiles assigned',
       ]

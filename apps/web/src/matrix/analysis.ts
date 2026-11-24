@@ -7,7 +7,12 @@ import {
   type Source,
   type SampleThread,
 } from '../../../../packages/shared/src/conversations';
-import { bankRelease, ReferenceSchema } from '../../../../packages/shared/src/reference';
+import {
+  bankRelease,
+  ReferenceSchema,
+  cdcRelease,
+  WebEvidenceSchema,
+} from '../../../../packages/shared/src/reference';
 import { initialProfile, MatrixProfile } from './profile';
 
 export const sources: Record<Source, { name: string; color: string; example: string }> = {
@@ -65,6 +70,7 @@ export const RecipeSchema = z.object({
   agents: z.array(PersonaSchema).length(5),
   sources: z.array(SourceSchema),
   reference: ReferenceSchema,
+  webEvidence: WebEvidenceSchema.optional(),
   transport: z.enum(['MCP', 'Local archive']),
   seed: z.number().int(),
 });
@@ -127,6 +133,7 @@ export async function analyze(
 ): Promise<Recipe> {
   let archives = selected.map((source) => ({ source, threads: exampleThreads(source) }));
   let reference = bankRelease;
+  let webEvidence = cdcRelease;
   let transport: Recipe['transport'] = 'Local archive';
   try {
     const timed = AbortSignal.any([signal, AbortSignal.timeout(11500)]);
@@ -151,8 +158,18 @@ export async function analyze(
       )
     )
       throw Error('Missing MCP tools');
-    const [publicData, threads] = await Promise.all([
+    const [publicData, evidence, threads] = await Promise.all([
       rpc('tools/call', { name: 'read_population_reference', arguments: {} }, timed),
+      list.tools.some((t) => t.name === 'read_public_web_evidence')
+        ? rpc('tools/call', { name: 'read_public_web_evidence', arguments: {} }, timed)
+            .then(
+              (raw) =>
+                z
+                  .object({ structuredContent: z.object({ evidence: WebEvidenceSchema }) })
+                  .parse(raw).structuredContent.evidence,
+            )
+            .catch(() => cdcRelease)
+        : Promise.resolve(cdcRelease),
       Promise.all(
         selected.map(async (source) => {
           const data = await rpc(
@@ -173,6 +190,7 @@ export async function analyze(
       .object({ structuredContent: z.object({ reference: ReferenceSchema }) })
       .parse(publicData).structuredContent.reference;
     archives = threads;
+    webEvidence = evidence;
     transport = 'MCP';
   } catch {
     if (signal.aborted) throw signal.reason;
@@ -183,6 +201,7 @@ export async function analyze(
     sources: selected,
     agents: assignAgents(profile, archives),
     reference,
+    webEvidence,
     transport,
     seed: crypto.getRandomValues(new Uint32Array(1))[0],
   });
@@ -196,6 +215,7 @@ export const demoRecipe: Recipe = RecipeSchema.parse({
   ),
   sources: [...SourceSchema.options],
   reference: bankRelease,
+  webEvidence: cdcRelease,
   transport: 'Local archive',
   seed: 1701,
 });
