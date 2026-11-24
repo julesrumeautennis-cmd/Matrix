@@ -20,6 +20,7 @@ import { demoRecipe } from '../apps/web/src/matrix/analysis';
 import { getLives } from '../apps/web/src/matrix/simulation';
 import { funeralPerformer } from '../apps/web/src/data/funeralCast';
 import type { FuneralRecording } from '../apps/web/src/data/funeralAudio';
+import { elevenModel, elevenReading, libraryCast } from './chapel-readings';
 import namePronunciations from './funeral-pronunciations.json';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -53,17 +54,23 @@ function archives(): { profile: Profile; runs: Run[] }[] {
 interface RenderJob extends Omit<FuneralRecording, 'durationMs'> {
   speed: number;
   pronunciations: Record<string, string>;
+  speech?: ReturnType<typeof elevenReading>;
+  checkVoice?: boolean;
 }
 type PublishedRecording = FuneralRecording & { sha256?: string };
 const fileDigest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
 const args = process.argv.slice(2);
-if (args.some((arg) => arg !== '--elevenlabs'))
-  throw Error('Usage: npm run voices -- [--elevenlabs]');
-const remote = args.includes('--elevenlabs');
+if (
+  args.some((arg) => !['--elevenlabs', '--kokoro', '--plan'].includes(arg)) ||
+  (args.includes('--elevenlabs') && args.includes('--kokoro'))
+)
+  throw Error('Usage: npm run voices -- [--elevenlabs | --kokoro] [--plan]');
+const prior = existsSync(manifestPath) ? json(manifestPath) : {};
+const remote =
+  args.includes('--elevenlabs') || (!args.includes('--kokoro') && prior.engine === elevenModel);
+const planOnly = args.includes('--plan');
 if (remote && existsSync(join(root, '.env'))) process.loadEnvFile(join(root, '.env'));
-if (remote && !process.env.ELEVENLABS_API_KEY)
-  throw Error('Set ELEVENLABS_API_KEY to use the ElevenLabs library.');
-const engine = remote ? 'eleven_v3' : 'kokoro-82m-v1.0';
+const engine = remote ? elevenModel : 'kokoro-82m-v1.0';
 const delivery: Record<string, number> = {
   bm_george: 0.91,
   bf_emma: 0.92,
@@ -98,16 +105,20 @@ for (const { profile, runs } of [
   }
 }
 for (const { cast, text } of passages) {
-  const voice = remote ? process.env['ELEVENLABS_VOICE_' + cast.toUpperCase()] : cast;
+  const voice = remote
+    ? process.env['ELEVENLABS_VOICE_' + cast.toUpperCase()] || libraryCast[cast]
+    : cast;
   if (!voice) throw Error('Set a library voice in ELEVENLABS_VOICE_' + cast.toUpperCase());
   const speed = remote ? 1 : (delivery[cast] ?? 0.95);
   const words = new Set(text.match(/[\p{L}\p{M}]+/gu) ?? []);
   const names = remote
     ? []
     : Object.entries(namePronunciations).filter(([name]) => words.has(name));
-  const digest = createHash('sha256')
-    .update(JSON.stringify([engine, 'chapel-reading-v1', voice, speed, text, ...names]))
-    .digest('hex');
+  const speech = remote ? elevenReading(cast, text) : undefined;
+  const rendition = speech
+    ? [engine, 'mp3_44100_128', voice, speech]
+    : [engine, 'chapel-reading-v1', voice, speed, text, ...names];
+  const digest = createHash('sha256').update(JSON.stringify(rendition)).digest('hex');
   const src = '/audio/chapel/' + digest + '.mp3';
   const job = {
     cast,
@@ -116,12 +127,13 @@ for (const { cast, text } of passages) {
     text,
     src,
     pronunciations: Object.fromEntries(names),
+    speech,
+    checkVoice: remote && !Object.values(libraryCast).includes(voice),
   };
   jobs.set(src, job);
   castReadings.set(JSON.stringify([cast, text]), job);
 }
 if (!jobs.size) throw Error('Archives contain no speaking cues.');
-const prior = existsSync(manifestPath) ? json(manifestPath) : {};
 const cached = new Map<string, PublishedRecording>(
   (Array.isArray(prior.clips) ? prior.clips : []).map((clip: PublishedRecording) => [
     clip.src,
@@ -151,8 +163,23 @@ const pending = [...jobs.values()].filter((job) => {
   return true;
 });
 const outputDir = join(publicDir, 'audio/chapel');
+if (planOnly) {
+  console.log(
+    engine +
+      ': ' +
+      jobs.size +
+      ' unique recordings, ' +
+      pending.length +
+      ' to verify or render, up to ' +
+      pending.reduce((n, job) => n + Array.from(job.speech?.text ?? job.text).length, 0) +
+      ' input characters in pending passages (including delivery tags).',
+  );
+  process.exit(0);
+}
 mkdirSync(outputDir, { recursive: true });
 if (pending.length) {
+  if (remote && !process.env.ELEVENLABS_API_KEY)
+    throw Error('Set ELEVENLABS_API_KEY in the local .env file to record these passages.');
   const scratch = mkdtempSync(join(tmpdir(), 'eulogy-voices-'));
   try {
     const plan = join(scratch, 'plan.json');

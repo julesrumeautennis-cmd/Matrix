@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 
 import numpy as np
@@ -95,8 +96,16 @@ def eleven_request(path, data=None):
         data=json.dumps(data).encode("utf-8") if data is not None else None,
         headers={"xi-api-key": os.environ["ELEVENLABS_API_KEY"], "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            return response.read()
+    except urllib.error.HTTPError as error:
+        try:
+            detail = json.loads(error.read()).get("detail", {})
+            reason = detail.get("code") or detail.get("status") or error.reason
+        except (ValueError, AttributeError):
+            reason = error.reason
+        raise RuntimeError(f"ElevenLabs returned HTTP {error.code} ({reason}).") from None
 
 
 def check_library_voice(voice):
@@ -113,8 +122,7 @@ def eleven_take(job, path):
     from urllib.parse import quote
 
     endpoint = "/v1/text-to-speech/" + quote(job["voice"], safe="") + "?output_format=mp3_44100_128"
-    path.write_bytes(eleven_request(endpoint, {"text": job["text"], "model_id": "eleven_v3",
-                                               "voice_settings": {"stability": 0.5}}))
+    path.write_bytes(eleven_request(endpoint, job["speech"]))
 
 
 def duration_ms(path):
@@ -129,8 +137,8 @@ def main():
     jobs = json.loads(Path(plan).read_text())
     if engine == "kokoro-82m-v1.0":
         model = kokoro_model()
-    elif engine == "eleven_v3":
-        for voice in {job["voice"] for job in jobs}:
+    elif engine == "eleven_v4":
+        for voice in {job["voice"] for job in jobs if job.get("checkVoice")}:
             check_library_voice(voice)
     else:
         raise ValueError("Unknown speech engine")
