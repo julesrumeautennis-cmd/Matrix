@@ -6,7 +6,7 @@ import type { Profile } from '@eulogy/shared';
 import type { ChapelGuest } from '../data/funeralCast';
 import ChapelArchitecture from './ChapelArchitecture';
 import { ChapelActor } from './ChapelActor';
-import { seatPositions, type Beat, type Shot } from './chapelBlocking';
+import { chapelSeat, lectern, type ChapelSeat, type Beat, type Shot } from './chapelBlocking';
 
 const cameraAngles = {
   wide: { eye: [0, 2.6, 9.35], aim: [0, 2.55, -3.9], fov: 48 },
@@ -18,32 +18,53 @@ const cameraAngles = {
 function Camera({
   shot,
   seat,
+  lastSeat,
   reduced,
 }: {
   shot: Shot;
-  seat: number | undefined;
+  seat: ChapelSeat | undefined;
+  lastSeat: ChapelSeat;
   reduced: boolean;
 }) {
   const look = useRef(new Vector3(0, 2.55, -3.9));
-  const { eye, target, fov } = useMemo(() => {
+  const framed = useRef(false);
+  const { eye, target, fov, halfWidth } = useMemo(() => {
     const a = cameraAngles[shot];
     const target = new Vector3(...a.aim),
       eye = new Vector3(...a.eye);
-    if (shot === 'front_row' && seat !== undefined) {
-      target.x = seat;
-      eye.x = seat * 0.72;
-      eye.z = -1.55;
+    let halfWidth = 0.5;
+    if (shot === 'front_row' && seat) {
+      target.x = seat.position.x;
+      target.z = seat.position.z + 0.16;
+      eye.x = seat.position.x * (seat.row ? 0.9 : 0.72);
+      eye.z = seat.row ? seat.position.z - 1.2 : -1.55;
+      if (seat.row) eye.y = 1.68;
     }
-    return { eye, target, fov: a.fov };
-  }, [shot, seat]);
+    if (shot === 'wide' && lastSeat.row > 0) {
+      // Frame the heads in the nearest pew and the priest while staying inside the rear wall.
+      eye.z = Math.min(11.65, eye.z + lastSeat.row * 1.25);
+      eye.y += lastSeat.row * 0.55;
+      const rearDistance = eye.z - lastSeat.position.z;
+      const rearAngle = Math.atan2(eye.y - 1.08, rearDistance);
+      const altarAngle = Math.atan2(eye.y - 1.65, eye.z - lectern.z);
+      const pitch = (rearAngle + altarAngle) / 2;
+      target.y = eye.y - Math.tan(pitch) * (eye.z - target.z);
+      const depth = rearDistance * Math.cos(pitch) + (eye.y - 1.08) * Math.sin(pitch);
+      halfWidth = Math.max(halfWidth, 4.05 / depth);
+    }
+    return { eye, target, fov: a.fov, halfWidth };
+  }, [shot, seat, lastSeat]);
   useFrame(({ camera }, dt) => {
-    const factor = reduced ? 1 : 1 - Math.exp(-4.1 * Math.min(dt, 0.16));
+    const factor = reduced || !framed.current ? 1 : 1 - Math.exp(-4.1 * Math.min(dt, 0.16));
+    framed.current = true;
     camera.position.lerp(eye, factor);
     look.current.lerp(target, factor);
     camera.lookAt(look.current);
     if ('fov' in camera) {
       const frameFov =
-        shot === 'wide' ? Math.max(fov, (2 * Math.atan(0.5 / camera.aspect) * 180) / Math.PI) : fov;
+        shot === 'wide'
+          ? Math.max(fov, (2 * Math.atan(halfWidth / camera.aspect) * 180) / Math.PI)
+          : fov;
       if (Math.abs(camera.fov - frameFov) <= 0.02) return;
       camera.fov += (frameFov - camera.fov) * factor;
       camera.updateProjectionMatrix();
@@ -75,6 +96,7 @@ function Portrait({ url }: { url: string }) {
 export default function ChapelScene({
   profile,
   guests,
+  firstGuest,
   onReady,
   speaker,
   priestSpeaking,
@@ -87,6 +109,7 @@ export default function ChapelScene({
 }: {
   profile: Profile;
   guests: ChapelGuest[];
+  firstGuest: number;
   onReady: () => void;
   speaker: string | undefined;
   priestSpeaking: boolean;
@@ -98,7 +121,9 @@ export default function ChapelScene({
   level: () => number | null;
 }) {
   useEffect(onReady, [onReady]);
-  const seat = seatPositions[guests.findIndex((relative) => relative.id === focus)];
+  const focused = guests.findIndex((relative) => relative.id === focus);
+  const seat = focused < 0 ? undefined : chapelSeat(firstGuest + focused);
+  const lastSeat = chapelSeat(firstGuest + Math.max(0, guests.length - 1));
   return (
     <>
       <ChapelArchitecture />
@@ -116,7 +141,7 @@ export default function ChapelScene({
           key={relative.id}
           profileId={profile.id}
           relative={relative}
-          index={index}
+          index={firstGuest + index}
           active={speaker === relative.id}
           tearful={tearful && speaker === relative.id}
           beat={beat}
@@ -137,7 +162,7 @@ export default function ChapelScene({
           )}
         </>
       )}
-      <Camera shot={shot} seat={seat} reduced={reduced} />
+      <Camera shot={shot} seat={seat} lastSeat={lastSeat} reduced={reduced} />
     </>
   );
 }

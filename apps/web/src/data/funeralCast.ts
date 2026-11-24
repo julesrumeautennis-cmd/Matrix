@@ -7,8 +7,7 @@ export type ChapelCue = Omit<FuneralCue, 'kind'> & {
   focusId?: string;
 };
 
-// These are stock performers. A second character with the same relationship
-// gets a different performer, assigned in the order of the profile's cast.
+// Stock voices rotate in cast order within each relationship.
 const performers = {
   partner: ['af_heart', 'am_michael', 'bf_alice', 'am_puck', 'bf_emma'],
   child: ['af_bella', 'am_puck', 'af_sarah', 'bm_fable', 'bf_alice'],
@@ -28,5 +27,33 @@ export function funeralPerformer(
   const relative = profile.relatives.find((person) => person.id === cue.relativeId);
   if (!relative) return undefined;
   const sameRelation = profile.relatives.filter((person) => person.relation === relative.relation);
-  return performers[relative.relation][sameRelation.indexOf(relative)];
+  const voices = performers[relative.relation];
+  return voices[sameRelation.indexOf(relative) % voices.length];
+}
+
+const julesCast: Record<string, string> = {
+  maman: 'mother',
+  papa: 'father',
+  ines: 'sister',
+  theo: 'friend',
+};
+const louisCast: Record<string, string> = {
+  camille: 'mourner',
+  lea: 'sister',
+  anne: 'mother',
+  jules: 'friend',
+};
+
+const stockModels = ['mother', 'sister', 'friend', 'father', 'visitor', 'mourner'] as const;
+export function chapelModel(
+  profileId: string,
+  guest: ChapelGuest | undefined,
+  index: number,
+): string {
+  if (!guest) return 'visitor';
+  if (guest.relation === 'partner') return 'mourner';
+  const cast =
+    profileId === 'jules-film' ? julesCast : profileId === 'louis-demo' ? louisCast : undefined;
+  if (cast && Object.hasOwn(cast, guest.id)) return cast[guest.id]!;
+  return stockModels[index % stockModels.length]!;
 }

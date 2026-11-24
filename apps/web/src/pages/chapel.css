@@ -256,6 +256,25 @@
   padding: 0;
   margin: 0;
 }
+.pew-pages {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 6px;
+  border-bottom: 1px solid var(--edge);
+  color: var(--label);
+  font-size: 12px;
+}
+.pew-pages button {
+  background: transparent;
+  border: 0;
+  color: var(--paper);
+  padding: 6px 10px;
+}
+.theatre .pew-pages button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
 .agent-list li + li {
   border-top: 1px solid var(--edge);
 }
