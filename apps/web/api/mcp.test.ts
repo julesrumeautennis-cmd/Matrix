@@ -33,6 +33,20 @@ it('discovers and executes read-only tools and rejects arbitrary sources', async
     ).error.code,
   ).toBe(-32602);
 });
+it('returns an ordered sample thread for each requested person and validates the voice templates', async () => {
+  const params = {
+    name: 'list_conversations',
+    arguments: { source: 'gmail', templates: [3, 0, 2, 4, 1, 3] },
+  };
+  const response = await (await post('tools/call', params)).json();
+  const threads = response.result.structuredContent.threads;
+  expect(threads.map((thread: { seat: number }) => thread.seat)).toEqual([0, 1, 2, 3, 4, 5]);
+  expect(threads[0].messages).toEqual(threads[5].messages);
+  const invalid = await (
+    await post('tools/call', { ...params, arguments: { source: 'gmail', templates: [9] } })
+  ).json();
+  expect(invalid.error.code).toBe(-32602);
+});
 it('reads a configured Nexla toolset through discovery and a validated data frame', async () => {
   vi.stubEnv('NEXLA_MCP_URL', 'https://api-genai.nexla.io/mcp/service_key/test-workspace');
   vi.stubEnv('NEXLA_SERVICE_KEY', 'test-only');

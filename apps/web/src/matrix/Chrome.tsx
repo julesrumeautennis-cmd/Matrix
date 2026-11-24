@@ -40,10 +40,12 @@ export function Header({ step }: { step?: number }) {
   );
 }
 export function Shell({ step, children }: { step: number; children: ReactNode }) {
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [pathname]);
+    const section = hash === '#circle' ? document.getElementById('circle') : null;
+    if (section) section.scrollIntoView({ block: 'start' });
+    else window.scrollTo(0, 0);
+  }, [pathname, hash]);
   return (
     <div className="mx">
       <Header step={step} />

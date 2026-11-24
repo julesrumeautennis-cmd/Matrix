@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { RelationSchema, type Profile, type Relative } from '@eulogy/shared';
+import { type Profile, type Relative } from '@eulogy/shared';
 import { z } from 'zod';
+import { InnerCircle, RelativeFields } from '../matrix/InnerCircle';
 import { MatrixProfile } from '../matrix/profile';
 import { Heading, Shell } from '../matrix/Chrome';
 import { useProfileStore } from '../store/profile';
@@ -178,10 +179,16 @@ export default function Onboarding() {
   const live = useProfileStore((s) => s.profile),
     save = useProfileStore((s) => s.setProfile);
   const [draft, setDraft] = useState<Profile>(() => structuredClone(live)),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [editId, setEditId] = useState<string | null>(null),
+    [dirty, setDirty] = useState(false);
   const person = draft.relatives.find((r) => r.id === id);
   if (id && !person) return <Navigate replace to="/you" />;
-  const update = (patch: Partial<Profile>) => setDraft((p) => ({ ...p, ...patch }));
+  const update = (patch: Partial<Profile>) => {
+    setDirty(true);
+    setError('');
+    setDraft((p) => ({ ...p, ...patch }));
+  };
   function change(patch: Partial<Relative>) {
     setDraft((p) => ({
       ...p,
@@ -192,7 +199,14 @@ export default function Onboarding() {
     e.preventDefault();
     const parsed = MatrixProfile.safeParse(draft);
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Check your profile.');
+      const issue = parsed.error.issues[0];
+      if (issue?.path[0] === 'relatives' && typeof issue.path[1] === 'number') {
+        const invalid = draft.relatives[issue.path[1]];
+        if (invalid) setEditId(invalid.id);
+        setError('Enter a name and an age from 0 to 125 for each person in your circle.');
+      } else {
+        setError(issue?.message ?? 'Check your profile.');
+      }
       return;
     }
     save(parsed.data);
@@ -237,63 +251,25 @@ export default function Onboarding() {
         )}
       </Heading>
       <form className="mx-form" onSubmit={submit}>
+        {error && (
+          <p className="mx-form-error" role="alert">
+            {error}
+          </p>
+        )}
         {person ? (
           <fieldset>
             <legend>Person details</legend>
-            <div className="mx-fields">
-              <label>
-                Name
-                <input
-                  required
-                  maxLength={80}
-                  value={person.name}
-                  onChange={(e) => change({ name: e.target.value })}
-                />
-              </label>
-              <label>
-                Relationship
-                <select
-                  value={person.relation}
-                  onChange={(e) => change({ relation: RelationSchema.parse(e.target.value) })}
-                >
-                  {RelationSchema.options.map((r) => (
-                    <option key={r}>{r}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Age
-                <input
-                  type="number"
-                  required
-                  min={0}
-                  max={125}
-                  value={person.age}
-                  onChange={(e) => change({ age: Number(e.target.value) })}
-                />
-              </label>
-              <label>
-                Where you stand today
-                <textarea
-                  required
-                  maxLength={800}
-                  value={person.relationshipState}
-                  onChange={(e) => change({ relationshipState: e.target.value })}
-                />
-              </label>
-              <label>
-                What they wish you understood
-                <textarea
-                  required
-                  maxLength={800}
-                  value={person.grievance}
-                  onChange={(e) => change({ grievance: e.target.value })}
-                />
-              </label>
-            </div>
+            <RelativeFields person={person} change={change} />
           </fieldset>
         ) : (
           <>
+            <InnerCircle
+              people={draft.relatives}
+              editId={editId}
+              setEditId={setEditId}
+              dirty={dirty}
+              update={(relatives) => update({ relatives })}
+            />
             <fieldset>
               <legend>Where you are now</legend>
               <div className="mx-fields">
@@ -370,7 +346,6 @@ export default function Onboarding() {
             <Photo profile={draft} update={update} />
           </>
         )}
-        {error && <p role="alert">{error}</p>}
         <div className="mx-form-foot">
           <Link to="/you" className="mx-text-button">
             Cancel

@@ -25,26 +25,20 @@ export const MatrixProfile = ProfileSchema.extend({
   fear: line,
   flaw: line,
   traits: z.array(line).length(3, 'Choose three traits.'),
-  relatives: z
-    .array(
-      ProfileSchema.shape.relatives.element.extend({
-        name: line.max(80),
-        age: z.number().int().min(0).max(125),
-        relationshipState: line,
-        grievance: line,
-      }),
-    )
-    .length(5),
+  relatives: z.array(
+    ProfileSchema.shape.relatives.element.extend({
+      name: line.max(80),
+      age: z.number().int().min(0).max(125),
+      relationshipState: z.string().trim().max(800),
+      grievance: z.string().trim().max(800),
+    }),
+  ),
 }).refine(
-  (p) => new Set(p.relatives.map((r) => r.id)).size === 5,
+  (p) =>
+    new Set([p.id, 'destiny', ...p.relatives.map((r) => r.id)]).size === p.relatives.length + 2,
   'Each person needs their own ID.',
 );
 
 export function upgradeProfile(profile: Profile): Profile {
-  const relatives = [...profile.relatives];
-  for (const person of initialProfile.relatives) {
-    if (relatives.length === 5) break;
-    if (!relatives.some((r) => r.id === person.id)) relatives.push(person);
-  }
-  return { ...profile, habits: { ...initialProfile.habits, ...profile.habits }, relatives };
+  return { ...profile, habits: { ...initialProfile.habits, ...profile.habits } };
 }

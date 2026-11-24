@@ -20,13 +20,12 @@ export const InputProfile = ProfileSchema.extend({
       ProfileSchema.shape.relatives.element.extend({
         id: Id,
         name: text,
-        relationshipState: text,
-        grievance: text,
+        relationshipState: z.string().trim().max(1200),
+        grievance: z.string().trim().max(1200),
         age: z.number().int().min(0).max(125),
       }),
     )
-    .min(1)
-    .max(5),
+    .min(1),
   photoUrl: z.string().url().max(6000).optional(),
 }).refine(
   (p) =>

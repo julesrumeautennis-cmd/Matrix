@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { SourceSchema, type Source } from '../../../../packages/shared/src/conversations';
 import { useProfileStore } from '../store/profile';
-import { castColors, sources } from '../matrix/analysis';
+import { castColor, sources } from '../matrix/analysis';
 import { Shell, Heading, Orbit, SourceIcon } from '../matrix/Chrome';
 
 function Connector({ source, close }: { source: Source; close: () => void }) {
@@ -43,7 +43,7 @@ function Connector({ source, close }: { source: Source; close: () => void }) {
         <h2 id="connector-heading">{config.name}</h2>
         <p>
           Name this source or use the sample. Matrix assigns fictional conversation excerpts to the
-          five people in your circle.
+          people in your circle.
         </p>
         <label>
           Account or archive label{' '}
@@ -111,24 +111,25 @@ export default function Overview() {
           </Link>
         </div>
         <div className="mx-circle">
-          <h3>Your five people</h3>
+          <h3>Your inner circle</h3>
           <div>
             {profile.relatives.map((p, i) => (
               <Link to={'/you/person/' + encodeURIComponent(p.id)} key={p.id}>
-                <i style={{ background: castColors[i + 1] }} />
+                <i style={{ background: castColor(i + 1) }} />
                 {p.name}
               </Link>
             ))}
           </div>
+          <Link to="/you/profile#circle" className="mx-manage-circle">
+            Manage circle ↗
+          </Link>
         </div>
       </section>
       <section className="mx-connect">
         <div className="mx-section-row">
           <div>
             <h2>Conversation sources</h2>
-            <p>
-              Give your five agents a voice with sample archives through the Nexla MCP adapter demo.
-            </p>
+            <p>Give your agents a voice with sample archives through the Nexla MCP adapter demo.</p>
           </div>
           <span className="mx-chip">{Object.keys(links).length} / 5 connected</span>
         </div>
@@ -155,8 +156,11 @@ export default function Overview() {
           <span className="mx-live-dot" />{' '}
           {Object.keys(links).length ? 'Sample archives ready' : 'Using sample archives by default'}
         </p>
-        <Link to="/analysis" className="mx-primary">
-          Analyze my life <span>→</span>
+        <Link
+          to={profile.relatives.length ? '/analysis' : '/you/profile#circle'}
+          className="mx-primary"
+        >
+          {profile.relatives.length ? 'Analyze my life' : 'Add someone to begin'} <span>→</span>
         </Link>
       </div>
       {source && <Connector source={source} close={() => setSource(null)} />}
