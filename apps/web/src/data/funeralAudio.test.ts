@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildFuneralScript, ProfileSchema, RunSchema } from '@eulogy/shared';
 import { findFuneralRecording } from './funeralAudio';
+import { homily, missedCalls, testimony } from './chapelLines';
+import { demoRecipe } from '../matrix/analysis';
+import { getLives } from '../matrix/simulation';
+import { buildChapelService } from './chapelService';
 import manifest from './audio.json';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -23,10 +27,12 @@ describe('chapel recordings', () => {
     for (const [profile, runs] of [
       [jules, julesRuns],
       [louis, louisRuns],
+      [demoRecipe.profile, getLives(demoRecipe)],
     ] as const) {
       for (const run of runs) {
-        for (const cue of buildFuneralScript(profile, run)) {
-          const clip = findFuneralRecording(profile, cue);
+        const { guests, cues } = buildChapelService(profile, run);
+        for (const cue of cues) {
+          const clip = findFuneralRecording({ relatives: guests }, cue);
           if (!cue.speaks) {
             expect(clip).toBeUndefined();
             continue;
@@ -36,6 +42,21 @@ describe('chapel recordings', () => {
           referenced.add(clip!.src);
         }
       }
+    }
+    for (const text of [...Object.values(homily), ...missedCalls]) {
+      const clip = findFuneralRecording(louis, { kind: 'homily', speaks: true, text });
+      expect(clip?.cast).toBe('bm_george');
+      referenced.add(clip!.src);
+    }
+    for (const text of Object.values(testimony)) {
+      const clip = findFuneralRecording(louis, {
+        kind: 'witness',
+        relativeId: 'camille',
+        speaks: true,
+        text,
+      });
+      expect(clip?.cast).toBe('af_heart');
+      referenced.add(clip!.src);
     }
     expect(referenced).toEqual(new Set(manifest.clips.map((clip) => clip.src)));
     for (const clip of manifest.clips) {

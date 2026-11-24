@@ -1,19 +1,35 @@
-import { Component, Suspense, useEffect, useState, type ReactNode } from 'react';
+import {
+  Component,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { Relative } from '@eulogy/shared';
+import type { ChapelGuest } from '../data/funeralCast';
 import ChapelScene from '../components/ChapelScene';
 import { type Shot } from '../components/chapelBlocking';
 import Ledger from '../components/Ledger';
 import PrivateFeed from '../components/PrivateFeed';
-import { getScreening, screeningQuery, type Screening } from '../data/screening';
+import { screeningQuery } from '../data/screening';
+import { chapelScreening, type ChapelScreening } from '../data/chapelScreening';
 import { useFuneralPlayback } from './useFuneralPlayback';
 import './chapel.css';
 
-class ProjectionBoundary extends Component<{ children: ReactNode }, { unavailable: boolean }> {
+class ProjectionBoundary extends Component<
+  { children: ReactNode; onUnavailable: () => void },
+  { unavailable: boolean }
+> {
   state = { unavailable: false };
   static getDerivedStateFromError() {
     return { unavailable: true };
+  }
+  componentDidCatch() {
+    this.props.onUnavailable();
   }
   render() {
     if (this.state.unavailable)
@@ -46,8 +62,7 @@ const views: { shot: Shot | null; title: string }[] = [
   { shot: 'pulpit', title: 'Lectern' },
   { shot: 'front_row', title: 'Pews' },
 ];
-function relation(relative: Relative | undefined, id: string) {
-  if (!relative) return 'Narrator';
+function relation(relative: ChapelGuest, id: string) {
   if (id === 'jules-film') {
     if (relative.id === 'ines') return 'Sister';
     if (relative.id === 'papa') return 'Father';
@@ -59,13 +74,15 @@ function relation(relative: Relative | undefined, id: string) {
 function Service({
   screening: { profile, runs, summary },
   sample,
+  life,
 }: {
-  screening: Screening;
+  screening: ChapelScreening;
   sample: string | null;
+  life: string | null;
 }) {
   const initial = Math.max(
     0,
-    runs.findIndex((r) => r.run_id === summary.most_probable_run_id),
+    runs.findIndex((r) => r.run_id === (life ?? summary.most_probable_run_id)),
   );
   const best = runs.findIndex((r) => r.run_id === summary.best_run_id);
   const remaining = Array.from(
@@ -75,51 +92,61 @@ function Service({
   const playlist = [initial, ...remaining.filter((i) => i !== initial)];
   const [position, setPosition] = useState(0);
   const [manual, setManual] = useState<Shot | null>(null);
+  const [visited, setVisited] = useState<string>();
+  const [projectionReady, setProjectionReady] = useState(false);
+  const projection = useRef<HTMLDivElement>(null);
+  const ready = useCallback(() => setProjectionReady(true), []);
   const [tab, setTab] = useState<'Agents' | 'Decisions' | 'Private feed'>('Agents');
   const reduced = useReducedMotion();
   const index = playlist[position]!;
   const run = runs[index]!;
-  const player = useFuneralPlayback(profile, run, reduced);
-  const { state, cues } = player;
+  const player = useFuneralPlayback(profile, run, reduced, projectionReady);
+  const { state, cues, guests, serviceLength } = player;
   const cue = cues[state.index]!;
-  const witnessIndex = profile.relatives.findIndex((person) => person.id === cue.relativeId);
-  const witness = profile.relatives[witnessIndex];
+  const witnessIndex = guests.findIndex((person) => person.id === cue.relativeId);
+  const witness = guests[witnessIndex];
   const isPlaying = state.status === 'playing';
   const isSpeaking = isPlaying && state.beat === 'speak';
-  const witnesses = run.eulogies.filter((e) => e.speaks).length;
+  const speakingForFamily = cues
+    .slice(0, serviceLength)
+    .filter((line) => line.kind === 'witness' && line.speaks).length;
   const finalChapter = Math.max(0, run.years.length - 1);
   const activeChapter =
     state.status === 'complete'
       ? finalChapter
       : Math.min(
           finalChapter,
-          Math.round((state.index * finalChapter) / Math.max(1, cues.length - 1)),
+          Math.round((state.index * finalChapter) / Math.max(1, serviceLength - 1)),
         );
   const [selectedChapter, setSelectedChapter] = useState<number | null>(null);
   const chapter = selectedChapter ?? activeChapter;
+  const focus = isPlaying
+    ? (cue.focusId ?? (state.beat === 'silence' ? cue.relativeId : undefined))
+    : undefined;
   const shot =
     manual ??
-    (isPlaying && witness
-      ? isSpeaking
-        ? 'pulpit'
-        : state.beat === 'silence'
-          ? 'front_row'
-          : 'wide'
-      : 'wide');
-  const agent = witness ? pad(witnessIndex + 2) : '00';
-  const role = relation(witness, profile.id);
+    (!isPlaying
+      ? 'wide'
+      : focus
+        ? 'front_row'
+        : isSpeaking || state.beat === 'pause'
+          ? cue.tearful
+            ? 'testimony'
+            : 'pulpit'
+          : 'wide');
+  const name = witness?.name ?? 'The priest';
+  const backQuery = new URLSearchParams(screeningQuery(sample));
+  if (life || run.life_outcome) backQuery.set('life', run.run_id);
+  const back = '/lives' + (backQuery.size ? '?' + backQuery.toString() : '');
   function nextLife() {
     player.stop();
     setPosition((position + 1) % playlist.length);
     setManual(null);
+    setVisited(undefined);
     setSelectedChapter(null);
   }
   function nextVoice() {
-    if (state.index < cues.length - 1) {
-      player.play(state.index + 1, true);
-      return;
-    }
-    player.play(cues.length);
+    player.play(state.index >= serviceLength ? serviceLength - 1 : state.index + 1);
   }
   const sampleLabel = summary.generation?.scripted
     ? 'Dramatized screening'
@@ -129,13 +156,13 @@ function Service({
   return (
     <main className="theatre">
       <header className="film-bar chapel-bar">
-        <Link to="/">Eulogy</Link>
+        <Link to="/">Matrix</Link>
         <span>The chapel</span>
-        <Link to={'/lives' + screeningQuery(sample)}>Life atlas ↗</Link>
+        <Link to={back}>Life atlas ↗</Link>
       </header>
       <div className="chapel">
-        <div className="chapel-canvas">
-          <ProjectionBoundary>
+        <div className="chapel-canvas" ref={projection}>
+          <ProjectionBoundary onUnavailable={ready}>
             <Canvas
               dpr={[1, 1.35]}
               camera={{ position: [0, 2.6, 9.35], fov: 48, near: 0.1, far: 65 }}
@@ -144,8 +171,12 @@ function Service({
               <Suspense fallback={null}>
                 <ChapelScene
                   profile={profile}
+                  guests={guests}
+                  onReady={ready}
                   speaker={isPlaying && cue.speaks ? cue.relativeId : undefined}
-                  focus={isPlaying && state.beat === 'silence' ? cue.relativeId : undefined}
+                  priestSpeaking={isSpeaking && cue.kind !== 'witness'}
+                  tearful={!!cue.tearful}
+                  focus={manual === 'front_row' ? visited : focus}
                   beat={state.beat}
                   shot={shot}
                   reduced={reduced}
@@ -159,7 +190,10 @@ function Service({
               <button
                 key={view.title}
                 aria-pressed={view.shot === manual}
-                onClick={() => setManual(view.shot)}
+                onClick={() => {
+                  setManual(view.shot);
+                  setVisited(undefined);
+                }}
               >
                 {view.title}
               </button>
@@ -170,9 +204,15 @@ function Service({
               {isPlaying ? (
                 <>
                   <small>
-                    Agent {agent} <i /> {witness?.name ?? 'Destiny'} <i /> {role}
+                    {name} <i /> {witness ? relation(witness, profile.id) : 'Officiant'}
+                    {cue.tearful && isSpeaking && (
+                      <>
+                        {' '}
+                        <i /> Through tears
+                      </>
+                    )}
                   </small>
-                  {isSpeaking ? (
+                  {isSpeaking || state.beat === 'pause' ? (
                     <p className="spoken-line">{cue.text}</p>
                   ) : (
                     <p className="stage-direction">
@@ -195,15 +235,23 @@ function Service({
               {isPlaying ? (
                 <>
                   <button className="service-primary" onClick={nextVoice}>
-                    {state.index < cues.length - 1 ? 'Next voice' : 'Finish service'}{' '}
+                    {state.index === serviceLength - 1 ? 'Finish service' : 'Next line'}{' '}
                     <span aria-hidden="true">→</span>
                   </button>
                   <button onClick={player.stop}>Stop</button>
                 </>
               ) : (
-                <button className="service-primary" onClick={() => player.play()}>
+                <button
+                  className="service-primary"
+                  disabled={!projectionReady}
+                  onClick={() => player.play()}
+                >
                   <span aria-hidden="true">▶</span>{' '}
-                  {state.status === 'complete' ? 'Replay service' : 'Play service'}
+                  {!projectionReady
+                    ? 'Opening chapel…'
+                    : state.status === 'complete'
+                      ? 'Replay service'
+                      : 'Play service'}
                 </button>
               )}
               <button
@@ -246,7 +294,8 @@ function Service({
               <div>
                 <dt>Witnesses</dt>
                 <dd>
-                  {witnesses} of {run.eulogies.length} speak
+                  {guests.length} present · {speakingForFamily}{' '}
+                  {speakingForFamily === 1 ? 'testimony' : 'testimonies'}
                 </dd>
               </div>
             </dl>
@@ -266,37 +315,56 @@ function Service({
           <div className="record-details">
             {tab === 'Agents' ? (
               <ol className="agent-list" aria-label="Service cast">
-                {cues.map((line, i) => {
-                  const n = profile.relatives.findIndex((r) => r.id === line.relativeId);
-                  const r = profile.relatives[n];
-                  const bond = run.years
-                    .at(-1)
-                    ?.relative_states.find((s) => s.relative_id === r?.id)?.relationship_score;
-                  const active = isPlaying && i === state.index;
-                  const name = r?.name ?? 'Destiny';
+                {[undefined, ...guests].map((guest, n) => {
+                  const i = guest ? cues.findIndex((line) => line.relativeId === guest.id) : 0;
+                  const line = cues[i];
+                  const active =
+                    isPlaying && (guest ? cue.relativeId === guest.id : cue.kind !== 'witness');
+                  const person = guest?.name ?? 'The priest';
+                  const bond =
+                    guest &&
+                    run.years.at(-1)?.relative_states.find((s) => s.relative_id === guest.id)
+                      ?.relationship_score;
                   return (
-                    <li key={line.id}>
+                    <li key={guest ? 'guest-' + guest.id : 'officiant'}>
                       <button
-                        aria-label={(line.speaks ? 'Hear ' : 'Visit ') + name}
+                        disabled={!projectionReady}
+                        aria-label={(line?.speaks ? 'Hear ' : 'Visit ') + person}
                         aria-current={active ? 'step' : undefined}
-                        onClick={() => player.play(i, true)}
+                        onClick={() => {
+                          if (matchMedia('(max-width: 800px)').matches) {
+                            projection.current?.scrollIntoView({
+                              block: 'start',
+                              behavior: reduced ? 'instant' : 'smooth',
+                            });
+                          }
+                          if (i < 0) {
+                            setVisited(guest?.id);
+                            setManual('front_row');
+                          } else {
+                            setManual(null);
+                            player.play(i, true);
+                          }
+                        }}
                       >
-                        <span className="agent-code">AGENT {r ? pad(n + 2) : '00'}</span>
+                        <span className="agent-code">{guest ? 'SEAT ' + pad(n) : 'PULPIT'}</span>
                         <span className="agent-person">
-                          <strong>{name}</strong>
+                          <strong>{person}</strong>
                           <small>
-                            {relation(r, profile.id)}
+                            {guest ? relation(guest, profile.id) : 'Officiant'}
                             {bond !== undefined ? ' · Bond ' + bond : ''}
                           </small>
                         </span>
                         <span className="agent-state">
                           {active && isSpeaking
                             ? 'Speaking'
-                            : r
-                              ? line.speaks
-                                ? 'Speaks'
-                                : 'Silent'
-                              : 'Opening'}
+                            : !guest
+                              ? 'Presides'
+                              : !line?.speaks
+                                ? 'Silent'
+                                : i < serviceLength
+                                  ? 'Testimony'
+                                  : 'Farewell'}
                         </span>
                       </button>
                     </li>
@@ -346,12 +414,21 @@ function Service({
 export default function Chapel() {
   const [params] = useSearchParams();
   const sample = params.get('screening');
-  const screening = getScreening(sample);
+  const life = params.get('life');
+  const screening = useMemo(() => chapelScreening(sample, life), [sample, life]);
+  if (!screening)
+    return (
+      <main className="theatre screening-missing">
+        <h1>This life belongs to another screening.</h1>
+        <Link to="/lives">Choose a life in the atlas →</Link>
+      </main>
+    );
   return (
     <Service
-      key={screening.profile.id + screeningQuery(sample)}
+      key={screening.profile.id + screeningQuery(sample) + (life ?? '')}
       screening={screening}
       sample={sample}
+      life={life}
     />
   );
 }

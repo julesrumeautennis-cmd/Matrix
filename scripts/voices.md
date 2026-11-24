@@ -1,10 +1,10 @@
 # Chapel recordings
 
-The chapel uses stock synthetic English voices. The recorded script comes from the same `buildFuneralScript(profile, run)` function as its captions. Louis’s thirty lives and Jules’s two authored lives are the two recording sources. A witness who stays silent has no audio entry. A live line with unfamiliar wording returns no recording.
+The chapel uses stock synthetic English voices. The captions and recordings use the same `buildChapelService(profile, run)` script. The bundled audio covers the public Matrix screening, Louis’s thirty archived lives, and Jules’s two authored lives. The priest’s readings and the spouse’s testimony also play in personalized lives with the same outcomes. Original lines use a device voice when available.
 
 | Role in the archive     | Kokoro voice |
 | ----------------------- | ------------ |
-| Destiny                 | `bm_george`  |
+| Priest                  | `bm_george`  |
 | Inès                    | `af_kore`    |
 | Maman and Anne          | `bf_emma`    |
 | Papa                    | `am_fenrir`  |

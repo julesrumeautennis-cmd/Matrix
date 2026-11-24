@@ -13,13 +13,11 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  buildFuneralScript,
-  ProfileSchema,
-  RunSchema,
-  type Profile,
-  type Run,
-} from '@eulogy/shared';
+import { ProfileSchema, RunSchema, type Profile, type Run } from '@eulogy/shared';
+import { homily, missedCalls, testimony } from '../apps/web/src/data/chapelLines';
+import { buildChapelService } from '../apps/web/src/data/chapelService';
+import { demoRecipe } from '../apps/web/src/matrix/analysis';
+import { getLives } from '../apps/web/src/matrix/simulation';
 import { funeralPerformer } from '../apps/web/src/data/funeralCast';
 import type { FuneralRecording } from '../apps/web/src/data/funeralAudio';
 import namePronunciations from './funeral-pronunciations.json';
@@ -31,7 +29,7 @@ const publicDir = join(web, 'public');
 const manifestPath = join(web, 'src/data/audio.json');
 const json = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
 
-// Only these two authored, public archives belong in the browser's bundle.
+// The bundled recordings use only public demonstration data.
 function archives(): { profile: Profile; runs: Run[] }[] {
   const sources: [string, unknown[]][] = [
     ['jules', json(join(data, 'screenings/jules.json')).runs],
@@ -79,39 +77,48 @@ const delivery: Record<string, number> = {
 const jobs = new Map<string, RenderJob>();
 const castReadings = new Map<string, RenderJob>();
 let runCount = 0;
-let speakingCues = 0;
-for (const { profile, runs } of archives()) {
+const passages: { cast: string; text: string }[] = [
+  ...[...Object.values(homily), ...missedCalls].map((text) => ({ cast: 'bm_george', text })),
+  ...Object.values(testimony).map((text) => ({ cast: 'af_heart', text })),
+];
+for (const { profile, runs } of [
+  ...archives(),
+  { profile: demoRecipe.profile, runs: getLives(demoRecipe) },
+]) {
   runCount += runs.length;
   for (const run of runs) {
-    for (const cue of buildFuneralScript(profile, run)) {
+    const { guests, cues } = buildChapelService(profile, run);
+    for (const cue of cues) {
       if (!cue.speaks) continue;
-      speakingCues++;
-      const cast = funeralPerformer(profile, cue);
+      const cast = funeralPerformer({ relatives: guests }, cue);
       if (!cast || !cue.text.trim())
         throw Error('Missing performer or line for ' + run.run_id + '/' + cue.id);
-      const voice = remote ? process.env['ELEVENLABS_VOICE_' + cast.toUpperCase()] : cast;
-      if (!voice) throw Error('Set a library voice in ELEVENLABS_VOICE_' + cast.toUpperCase());
-      const speed = remote ? 1 : (delivery[cast] ?? 0.95);
-      const words = new Set(cue.text.match(/[\p{L}\p{M}]+/gu) ?? []);
-      const names = remote
-        ? []
-        : Object.entries(namePronunciations).filter(([name]) => words.has(name));
-      const digest = createHash('sha256')
-        .update(JSON.stringify([engine, 'chapel-reading-v1', voice, speed, cue.text, ...names]))
-        .digest('hex');
-      const src = '/audio/chapel/' + digest + '.mp3';
-      const job = {
-        cast,
-        voice,
-        speed,
-        text: cue.text,
-        src,
-        pronunciations: Object.fromEntries(names),
-      };
-      jobs.set(src, job);
-      castReadings.set(JSON.stringify([cast, cue.text]), job);
+      passages.push({ cast, text: cue.text });
     }
   }
+}
+for (const { cast, text } of passages) {
+  const voice = remote ? process.env['ELEVENLABS_VOICE_' + cast.toUpperCase()] : cast;
+  if (!voice) throw Error('Set a library voice in ELEVENLABS_VOICE_' + cast.toUpperCase());
+  const speed = remote ? 1 : (delivery[cast] ?? 0.95);
+  const words = new Set(text.match(/[\p{L}\p{M}]+/gu) ?? []);
+  const names = remote
+    ? []
+    : Object.entries(namePronunciations).filter(([name]) => words.has(name));
+  const digest = createHash('sha256')
+    .update(JSON.stringify([engine, 'chapel-reading-v1', voice, speed, text, ...names]))
+    .digest('hex');
+  const src = '/audio/chapel/' + digest + '.mp3';
+  const job = {
+    cast,
+    voice,
+    speed,
+    text,
+    src,
+    pronunciations: Object.fromEntries(names),
+  };
+  jobs.set(src, job);
+  castReadings.set(JSON.stringify([cast, text]), job);
 }
 if (!jobs.size) throw Error('Archives contain no speaking cues.');
 const prior = existsSync(manifestPath) ? json(manifestPath) : {};
@@ -204,8 +211,8 @@ if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8') !== out) {
 console.log(
   runCount +
     ' lives, ' +
-    speakingCues +
-    ' speaking cues, ' +
+    passages.length +
+    ' passages, ' +
     jobs.size +
     ' recordings (' +
     pending.length +

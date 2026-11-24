@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { Profile } from '@eulogy/shared';
 import { saveScreening } from '../data/screening';
+import { prepareChapelEntry } from '../data/chapelEntry';
 import { demoRecipe, getRecipe } from '../matrix/analysis';
 import {
   getLives,
@@ -75,6 +76,7 @@ function Explorer() {
   function open() {
     setParams({ life: selected.run_id }, { replace: true });
     enterService(recipe.profile, selected);
+    prepareChapelEntry(selected.run_id);
     navigate('/chapel?life=' + encodeURIComponent(selected.run_id));
   }
   return (
