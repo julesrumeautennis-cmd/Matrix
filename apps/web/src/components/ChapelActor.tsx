@@ -3,10 +3,12 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { AnimationMixer, Group, MathUtils, Mesh, Vector3 } from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import type { Relative } from '@eulogy/shared';
+import type { ChapelGuest } from '../data/funeralCast';
+import { costumeAnchor, Tears, Vestments } from './ChapelCostume';
 import {
   aisleRoutes,
   lectern,
+  presiderAside,
   riseSeconds,
   seatPositions,
   sitSeconds,
@@ -16,14 +18,23 @@ import {
 
 const clipNames = ['seated', 'stand', 'walk', 'idle', 'speak', 'sit'] as const;
 type Motion = (typeof clipNames)[number];
-type Face = { weights: number[]; jaw?: number; left?: number; right?: number };
+type Face = {
+  weights: number[];
+  jaw?: number;
+  left?: number;
+  right?: number;
+  brow?: number;
+  frown?: number[];
+};
 const smooth = (t: number) => MathUtils.smoothstep(t, 0, 1);
 const nearestAngle = (a: number, b: number) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a));
 type Props = {
   profileId: string;
-  relative: Relative;
+  relative?: ChapelGuest;
   index: number;
   active: boolean;
+  yieldLectern?: boolean;
+  tearful?: boolean;
   beat: Beat;
   reduced: boolean;
   level: () => number | null;
@@ -41,18 +52,36 @@ const louisCast: Record<string, string> = {
   anne: 'mother',
   jules: 'friend',
 };
-export function ChapelActor({ profileId, relative, index, active, beat, reduced, level }: Props) {
+export function ChapelActor({
+  profileId,
+  relative,
+  index,
+  active,
+  yieldLectern,
+  tearful,
+  beat,
+  reduced,
+  level,
+}: Props) {
+  const presider = !relative;
   const cast = profileId === 'jules-film' ? julesCast : profileId === 'louis-demo' ? louisCast : {};
-  const model = cast[relative.id] ?? ['mother', 'sister', 'friend', 'father'][index]!;
+  const model = !relative
+    ? 'visitor'
+    : relative.relation === 'partner'
+      ? 'mourner'
+      : (cast[relative.id] ??
+        ['mother', 'sister', 'friend', 'father', 'visitor', 'mourner'][index]!);
   const asset = model === 'mourner' || model === 'visitor' ? model : 'cast/' + model;
   const { scene } = useGLTF('/avatars/' + asset + '.glb');
   const { animations } = useGLTF('/avatars/motion/' + model + '.glb');
   const rig = useMemo(() => {
     const body = clone(scene);
     const faces: Face[] = [];
+    const clothing: Mesh[] = [];
     body.traverse((o) => {
       if (!(o instanceof Mesh)) return;
       o.frustumCulled = false;
+      if (presider && o.name.startsWith('Wolf3D_Outfit_')) clothing.push(o);
       const dictionary = o.morphTargetDictionary;
       if (dictionary && o.morphTargetInfluences)
         faces.push({
@@ -60,6 +89,10 @@ export function ChapelActor({ profileId, relative, index, active, beat, reduced,
           jaw: dictionary.mouthOpen ?? dictionary.jawOpen ?? dictionary.viseme_aa,
           left: dictionary.eyeBlinkLeft ?? dictionary.eyesClosed,
           right: dictionary.eyeBlinkRight,
+          brow: dictionary.browInnerUp,
+          frown: [dictionary.mouthFrownLeft, dictionary.mouthFrownRight].filter(
+            (n): n is number => n !== undefined,
+          ),
         });
     });
     const mixer = new AnimationMixer(body);
@@ -72,8 +105,29 @@ export function ChapelActor({ profileId, relative, index, active, beat, reduced,
         return [clip.name, action] as const;
       }),
     );
-    return { body, faces, mixer, actions };
-  }, [scene, animations]);
+    body.updateMatrixWorld(true);
+    const vestment = presider ? costumeAnchor(body, 'Spine2') : null;
+    const left = body.getObjectByName('LeftEye'),
+      right = body.getObjectByName('RightEye');
+    const eyes =
+      model === 'mourner' && left && right
+        ? costumeAnchor(
+            body,
+            'Head',
+            left.getWorldPosition(new Vector3()).lerp(right.getWorldPosition(new Vector3()), 0.5),
+          )
+        : null;
+    return {
+      body,
+      faces,
+      mixer,
+      actions,
+      clothing,
+      vestment,
+      eyes,
+      head: body.getObjectByName('Head'),
+    };
+  }, [scene, animations, presider, model]);
   useEffect(() => {
     for (const action of rig.actions.values()) {
       action.reset().play();
@@ -87,6 +141,8 @@ export function ChapelActor({ profileId, relative, index, active, beat, reduced,
   const elapsed = useRef(0),
     previous = useRef(''),
     jaw = useRef(0);
+  const aside = useRef(0),
+    bow = useRef(0);
   const point = useMemo(() => new Vector3(), []),
     tangent = useMemo(() => new Vector3(), []);
   const route = aisleRoutes[index]!;
@@ -117,7 +173,16 @@ export function ChapelActor({ profileId, relative, index, active, beat, reduced,
     }
     let yaw = Math.PI;
     point.set(seat, 0, 1.24);
-    if (state === 'speak' || (reduced && state === 'approach')) {
+    if (presider) {
+      const target = yieldLectern ? 1 : 0;
+      const old = aside.current;
+      aside.current = reduced ? target : MathUtils.damp(old, target, 4, dt);
+      point.lerpVectors(lectern, presiderAside, aside.current);
+      yaw = -0.75 * aside.current;
+      const stride = reduced ? 0 : Math.min(0.64, Math.abs(target - old) * 2);
+      set('walk', time * 0.95, stride);
+      standing(1 - stride, active && beat === 'speak');
+    } else if (state === 'speak' || (reduced && state === 'approach')) {
       point.copy(lectern);
       yaw = 0;
       standing(1, state === 'speak');
@@ -154,7 +219,12 @@ export function ChapelActor({ profileId, relative, index, active, beat, reduced,
     } else {
       set('seated', idleTime, 1);
     }
+    if (rig.head && bow.current) rig.head.rotateX(-bow.current);
     rig.mixer.update(0);
+    const grief = tearful && state === 'speak' ? smooth(t / 0.65) : 0;
+    bow.current =
+      grief * (reduced ? 0.12 : 0.16 + Math.sin(t * 2.5) * 0.045 + Math.sin(t * 11) * 0.013);
+    if (rig.head && bow.current) rig.head.rotateX(bow.current);
     actor.position.copy(point);
     const turn = reduced ? 1 : 1 - Math.exp(-11 * Math.min(dt, 0.12));
     actor.rotation.y = MathUtils.lerp(actor.rotation.y, nearestAngle(actor.rotation.y, yaw), turn);
@@ -166,13 +236,24 @@ export function ChapelActor({ profileId, relative, index, active, beat, reduced,
     const blink = blinkTime < 0.16 ? Math.sin((Math.PI * blinkTime) / 0.16) : 0;
     for (const face of rig.faces) {
       if (face.jaw !== undefined) face.weights[face.jaw] = jaw.current;
-      if (face.left !== undefined) face.weights[face.left] = blink;
-      if (face.right !== undefined) face.weights[face.right] = blink;
+      const lids = Math.max(blink, grief * 0.32);
+      if (face.left !== undefined) face.weights[face.left] = lids;
+      if (face.right !== undefined) face.weights[face.right] = lids;
+      if (face.brow !== undefined) face.weights[face.brow] = grief * 0.76;
+      for (const frown of face.frown ?? []) face.weights[frown] = grief * 0.48;
     }
   });
   return (
-    <group ref={root} position={[seat, 0, 1.24]} rotation={[0, Math.PI, 0]}>
+    <group
+      ref={root}
+      position={presider ? lectern : [seat, 0, 1.24]}
+      rotation={[0, presider ? 0 : Math.PI, 0]}
+    >
       <primitive object={rig.body} dispose={null} />
+      {rig.vestment && <Vestments anchor={rig.vestment} clothing={rig.clothing} />}
+      {rig.eyes && tearful && active && beat === 'speak' && (
+        <Tears anchor={rig.eyes} reduced={reduced} />
+      )}
     </group>
   );
 }

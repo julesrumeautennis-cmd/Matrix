@@ -376,6 +376,20 @@
   outline: 2px solid #fae4ad;
   outline-offset: 2px;
 }
+.theatre button:disabled {
+  cursor: wait;
+  opacity: 0.67;
+}
+.screening-missing {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 1rem;
+  padding: 8vw;
+}
+.screening-missing a {
+  color: var(--amber);
+}
 @media (max-width: 800px) {
   .theatre .chapel {
     height: auto;

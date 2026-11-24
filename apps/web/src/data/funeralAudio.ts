@@ -1,5 +1,4 @@
-import type { FuneralCue, Profile } from '@eulogy/shared';
-import { funeralPerformer } from './funeralCast';
+import { funeralPerformer, type ChapelCue, type ChapelGuest } from './funeralCast';
 import manifest from './audio.json';
 
 export interface FuneralRecording {
@@ -14,8 +13,8 @@ const recordings: readonly FuneralRecording[] =
   'clips' in manifest && Array.isArray(manifest.clips) ? manifest.clips : [];
 
 export function findFuneralRecording(
-  profile: Pick<Profile, 'relatives'>,
-  cue: Pick<FuneralCue, 'speaks' | 'kind' | 'relativeId' | 'text'>,
+  profile: { relatives: readonly ChapelGuest[] },
+  cue: Pick<ChapelCue, 'speaks' | 'kind' | 'relativeId' | 'text'>,
 ): FuneralRecording | undefined {
   const cast = funeralPerformer(profile, cue);
   if (!cast) return undefined;
