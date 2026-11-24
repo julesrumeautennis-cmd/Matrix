@@ -107,8 +107,9 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .matrix-intro *,
-  .matrix-intro *::before {
+  .intro-light::before,
+  .intro-light .mx-orbit,
+  .intro-words h1 {
     animation: none;
   }
 }
