@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Profile, Run } from '@eulogy/shared';
 import { movementDuration, type Beat } from '../components/chapelBlocking';
-import { findFuneralRecording } from '../data/funeralAudio';
+import { devicePerformer, findFuneralRecording } from '../data/funeralAudio';
 import { funeralPerformer } from '../data/funeralCast';
 import { buildChapelService } from '../data/chapelService';
 import { claimChapelEntry } from '../data/chapelEntry';
@@ -66,6 +66,7 @@ export function useFuneralPlayback(
   );
 
   const unlock = useCallback((primedContext?: AudioContext) => {
+    window.speechSynthesis?.getVoices();
     const audio = recording.current ?? new Audio();
     recording.current = audio;
     if (!meter.current && typeof AudioContext !== 'undefined') {
@@ -147,12 +148,7 @@ export function useFuneralPlayback(
             const line = new SpeechSynthesisUtterance(cue.text);
             const cast = funeralPerformer({ relatives: guests }, cue) ?? '';
             const language = cast.startsWith('b') ? 'en-GB' : 'en-US';
-            const voices = window.speechSynthesis
-              .getVoices()
-              .filter((voice) => voice.lang.startsWith('en'));
-            const local = voices.filter((voice) => voice.lang === language);
-            const options = local.length ? local : voices;
-            line.voice = options[(witness + 1) % Math.max(options.length, 1)] ?? null;
+            line.voice = devicePerformer(window.speechSynthesis.getVoices(), language, witness + 1);
             line.lang = line.voice?.lang ?? language;
             line.rate = 0.96;
             utterance.current = line;

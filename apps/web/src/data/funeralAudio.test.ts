@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildFuneralScript, ProfileSchema, RunSchema } from '@eulogy/shared';
-import { findFuneralRecording } from './funeralAudio';
+import { devicePerformer, findFuneralRecording } from './funeralAudio';
+import { elevenReading, libraryCast } from '../../../../scripts/chapel-readings';
 import { homily, missedCalls, testimony } from './chapelLines';
 import { demoRecipe } from '../matrix/analysis';
 import { getLives } from '../matrix/simulation';
@@ -22,6 +23,32 @@ const louisRuns = read('data/runs/louis-demo.jsonl')
   .map((s) => RunSchema.parse(JSON.parse(s)));
 
 describe('chapel recordings', () => {
+  it('directs the library cast while preserving the exact caption words', () => {
+    for (const clip of manifest.clips) {
+      expect(libraryCast[clip.cast]).toBeTruthy();
+      const speech = elevenReading(clip.cast, clip.text);
+      expect(speech.text.replace(/\[[^\]]+\] /gu, '')).toBe(clip.text);
+      expect(speech.model_id).toBe('eleven_v4');
+    }
+    expect(libraryCast.bm_george).not.toBe(libraryCast.af_heart);
+    expect(elevenReading('af_heart', testimony.spouseAffair).text).toContain(
+      '[voice trembling] I do.',
+    );
+  });
+
+  it('uses natural English device voices for original lines and falls back to the available locale', () => {
+    const voices = [
+      { name: 'Daniel', lang: 'en-GB', voiceURI: 'compact.daniel' },
+      { name: 'Ava', lang: 'en-US', voiceURI: 'premium.ava' },
+      { name: 'Serena (Enhanced)', lang: 'en_GB', voiceURI: 'serena' },
+      { name: 'Amélie (Premium)', lang: 'fr-CA', voiceURI: 'amelie' },
+    ];
+    expect(devicePerformer(voices, 'en-GB', 0)).toBe(voices[2]);
+    expect(devicePerformer(voices.slice(0, 2), 'en-GB', 1)).toBe(voices[1]);
+    expect(devicePerformer(voices.slice(0, 1), 'en-US', 4)).toBe(voices[0]);
+    expect(devicePerformer(voices.slice(3), 'en-US', 0)).toBeNull();
+  });
+
   it('plays every opening and speaking witness in both archives and leaves silent witnesses silent', () => {
     const referenced = new Set<string>();
     for (const [profile, runs] of [

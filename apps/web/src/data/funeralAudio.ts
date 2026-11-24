@@ -12,6 +12,23 @@ export interface FuneralRecording {
 const recordings: readonly FuneralRecording[] =
   'clips' in manifest && Array.isArray(manifest.clips) ? manifest.clips : [];
 
+export function devicePerformer<T extends Pick<SpeechSynthesisVoice, 'lang' | 'name' | 'voiceURI'>>(
+  voices: readonly T[],
+  language: string,
+  slot: number,
+): T | null {
+  const english = voices.filter((voice) => /^en(?:[-_]|$)/i.test(voice.lang));
+  const natural = english.filter((voice) =>
+    /premium|enhanced|neural|natural/i.test(voice.name + ' ' + voice.voiceURI),
+  );
+  const available = natural.length ? natural : english;
+  const regional = available.filter(
+    (voice) => voice.lang.replace('_', '-').toLowerCase() === language.toLowerCase(),
+  );
+  const cast = regional.length ? regional : available;
+  return cast.length ? cast[slot % cast.length]! : null;
+}
+
 export function findFuneralRecording(
   profile: { relatives: readonly ChapelGuest[] },
   cue: Pick<ChapelCue, 'speaks' | 'kind' | 'relativeId' | 'text'>,
