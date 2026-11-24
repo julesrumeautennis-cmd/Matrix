@@ -3,10 +3,11 @@ import { z } from 'zod';
 export const SourceSchema = z.enum(['whatsapp', 'instagram', 'imessage', 'snapchat', 'gmail']);
 export type Source = z.infer<typeof SourceSchema>;
 export const ThreadSchema = z.object({
-  seat: z.number().int().min(0).max(4),
+  seat: z.number().int().nonnegative(),
   messages: z.array(z.string().min(1)).min(1),
 });
-export const ThreadsSchema = z.array(ThreadSchema).length(5);
+export const ThreadsSchema = z.array(ThreadSchema);
+export const TemplatesSchema = z.array(z.number().int().min(0).max(4)).min(1);
 export type SampleThread = z.infer<typeof ThreadSchema>;
 
 // Each row is a fictional contact. The columns are the five source adapters.
@@ -51,7 +52,7 @@ const library = [
   ],
 ];
 
-export function exampleThreads(source: Source): SampleThread[] {
+export function exampleThreads(source: Source, templates = [0, 1, 2, 3, 4]): SampleThread[] {
   const column = SourceSchema.options.indexOf(source);
-  return library.map((row, seat) => ({ seat, messages: [...row[column]!] }));
+  return templates.map((template, seat) => ({ seat, messages: [...library[template]![column]!] }));
 }

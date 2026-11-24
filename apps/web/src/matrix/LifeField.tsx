@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { Recipe } from './analysis';
-import { castColors } from './analysis';
+import { castColor } from './analysis';
 import { lifeNumber, type MatrixLife } from './simulation';
 
 export default function LifeField({
@@ -21,6 +21,7 @@ export default function LifeField({
     const el = ref.current,
       ctx = el?.getContext('2d');
     if (!el || !ctx) return;
+    const castSize = recipe.agents.length + 1;
     const media = matchMedia('(prefers-reduced-motion: reduce)');
     let frame = 0,
       last = -100;
@@ -48,10 +49,13 @@ export default function LifeField({
         ctx.fillRect(left, top, size - 3, size - 3);
         const clock = phase.current,
           chapter = life.years[Math.min(5, Math.floor(clock * 6))]!;
-        const points = Array.from({ length: 6 }, (_, k) => {
+        const points = Array.from({ length: castSize }, (_, k) => {
           const seed = (life.seed % 533) * 0.029;
           const angle =
-            seed + k * 1.047 + t * (k % 2 ? 0.22 : -0.2) + Math.sin(t * 0.71 + seed + k) * 0.42;
+            seed +
+            (k * Math.PI * 2) / castSize +
+            t * (k % 2 ? 0.22 : -0.2) +
+            Math.sin(t * 0.71 + seed + k) * 0.42;
           const score = k ? chapter.relative_states[k - 1]!.relationship_score : 50;
           const radius =
             size *
@@ -87,7 +91,7 @@ export default function LifeField({
         );
         ctx.fill();
         points.forEach(([x, y], k) => {
-          ctx.fillStyle = castColors[k]!;
+          ctx.fillStyle = castColor(k);
           ctx.beginPath();
           ctx.arc(
             x,
@@ -132,7 +136,7 @@ export default function LifeField({
       ref={ref}
       className="mx-field"
       role="img"
-      aria-label="100 simulated lives. Each square contains you and five color-coded people. Active lines follow their interactions."
+      aria-label={`${lives.length} simulated lives, each with ${recipe.agents.length + 1} color-coded agents. Active lines follow their interactions.`}
     />
   );
 }

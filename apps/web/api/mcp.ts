@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { exampleThreads, SourceSchema } from '../../../packages/shared/src/conversations';
+import {
+  exampleThreads,
+  SourceSchema,
+  TemplatesSchema,
+} from '../../../packages/shared/src/conversations';
 import { loadWebEvidence } from './webEvidence';
 import { loadReference } from './reference';
 import { json } from './http';
@@ -13,7 +17,7 @@ const message = z.object({
 });
 const call = z.object({
   name: z.literal('list_conversations'),
-  arguments: z.object({ source: SourceSchema }),
+  arguments: z.object({ source: SourceSchema, templates: TemplatesSchema.optional() }),
 });
 const referenceTool = {
   name: 'read_population_reference',
@@ -31,10 +35,19 @@ const webTool = {
 const tool = {
   name: 'list_conversations',
   description:
-    'Read fictional conversation excerpts for five cast slots from a Matrix sample source.',
+    'Read fictional conversation excerpts for each person in the cast from a Matrix sample source.',
   inputSchema: {
     type: 'object',
-    properties: { source: { type: 'string', enum: SourceSchema.options } },
+    properties: {
+      source: { type: 'string', enum: SourceSchema.options },
+      templates: {
+        type: 'array',
+        minItems: 1,
+        items: { type: 'integer', minimum: 0, maximum: 4 },
+        description:
+          'One sample voice template per person, in cast order. Defaults to the five demo voices.',
+      },
+    },
     required: ['source'],
     additionalProperties: false,
   },
@@ -109,7 +122,7 @@ export async function mcp(request: Request): Promise<Response> {
   }
   const input = call.safeParse(params);
   if (!input.success) return error(-32602, 'Invalid tool or source');
-  const threads = exampleThreads(input.data.arguments.source);
+  const threads = exampleThreads(input.data.arguments.source, input.data.arguments.templates);
   return reply({
     content: [{ type: 'text', text: JSON.stringify(threads) }],
     structuredContent: { threads },

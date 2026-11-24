@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { ProfileSchema, type Profile } from '@eulogy/shared';
+import { type Profile } from '@eulogy/shared';
 import { z } from 'zod';
 import { SourceSchema, type Source } from '../../../../packages/shared/src/conversations';
 import { initialProfile, MatrixProfile, upgradeProfile } from '../matrix/profile';
@@ -33,7 +33,7 @@ export const useProfileStore = create<ProfileState>()(
       name: 'matrix.profile',
       merge: (raw, current) => {
         const saved = z
-          .object({ profile: ProfileSchema, links: sources.optional() })
+          .object({ profile: MatrixProfile, links: sources.optional() })
           .safeParse(raw);
         if (!saved.success) return current;
         const profile = MatrixProfile.safeParse(upgradeProfile(saved.data.profile));

@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { SourceSchema } from '../../../../packages/shared/src/conversations';
-import { analyze, castColors, saveRecipe, sources, type Recipe } from '../matrix/analysis';
+import { analyze, castColor, saveRecipe, sources, type Recipe } from '../matrix/analysis';
 import { cohortName, getLives } from '../matrix/simulation';
 import { Heading, Shell } from '../matrix/Chrome';
 import { useProfileStore } from '../store/profile';
 
 export default function Analysis() {
+  const count = useProfileStore((s) => s.profile.relatives.length);
+  return count ? <AnalyzeCircle /> : <Navigate to="/you/profile#circle" replace />;
+}
+function AnalyzeCircle() {
   const { profile, links } = useProfileStore(),
     navigate = useNavigate();
   const [recipe, setRecipe] = useState<Recipe>(),
@@ -32,9 +36,15 @@ export default function Analysis() {
     return () => controller.abort();
   }, [profile, links, attempt]);
   useEffect(() => {
-    const timer = window.setInterval(() => setTick((n) => Math.min(n + 1, 20)), 360);
+    const timer = window.setInterval(
+      () =>
+        setTick((n) =>
+          Math.min(n + 1, profile.relatives.length + SourceSchema.options.length + 10),
+        ),
+      360,
+    );
     return () => clearInterval(timer);
-  }, []);
+  }, [profile.relatives.length]);
   const detailed = recipe ? getLives(recipe) : [];
   const cohort = cohortName(profile.currentActivity);
   const married = detailed.filter((r) => r.life_outcome.marriage_age !== null).length;
@@ -43,7 +53,14 @@ export default function Analysis() {
     ? [
         'initialize  /api/mcp  ·  ' + recipe.transport,
         'tools/list  →  conversation archive + population reference',
-        ...recipe.sources.map((s) => 'read  ' + s + '  /  5 sample threads'),
+        ...recipe.sources.map(
+          (s) =>
+            'read  ' +
+            s +
+            '  /  ' +
+            recipe.agents.length +
+            (recipe.agents.length === 1 ? ' sample thread' : ' sample threads'),
+        ),
         ...recipe.agents.map(
           (a, i) =>
             'bind  ' +
@@ -68,7 +85,11 @@ export default function Analysis() {
             ]
           : []),
         'cohort  ' + cohort + '  /  ' + detailed.length + ' fictional lives',
-        'complete  5 character profiles assigned',
+        'complete  ' +
+          recipe.agents.length +
+          (recipe.agents.length === 1
+            ? ' character profile assigned'
+            : ' character profiles assigned'),
       ]
     : [];
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -117,7 +138,7 @@ export default function Analysis() {
               <span>open matrix / context pipeline</span>
             </div>
             {logs.slice(0, shown).map((line, i) => (
-              <div key={line}>
+              <div key={i}>
                 <small>{String(i + 1).padStart(2, '0')}</small>
                 <span>{line}</span>
               </div>
@@ -128,14 +149,14 @@ export default function Analysis() {
         <section className="mx-agents">
           <div className="mx-panel-head">
             <span className="mx-kicker">Agent roster</span>
-            <span>05</span>
+            <span>{String(profile.relatives.length).padStart(2, '0')}</span>
           </div>
           {profile.relatives.map((p, i) => {
             const a = recipe?.agents[i],
               ready = done || (!!a && shown > 2 + (recipe?.sources.length ?? 0) + i);
             return (
               <div className="mx-agent" key={p.id}>
-                <i style={{ background: castColors[i + 1] }} />
+                <i style={{ background: castColor(i + 1) }} />
                 <div>
                   <strong>{p.name}</strong>
                   {ready && a && (

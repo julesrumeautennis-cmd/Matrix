@@ -22,7 +22,10 @@ export const sources: Record<Source, { name: string; color: string; example: str
   snapchat: { name: 'Snapchat', color: '#e8d47d', example: '@sample.snap' },
   gmail: { name: 'Gmail', color: '#e59c87', example: 'Sample inbox' },
 };
-export const castColors = ['#eff9dc', '#b4dd85', '#e8b47e', '#8abada', '#c09fd9', '#7dc8ba'];
+const castColors = ['#eff9dc', '#b4dd85', '#e8b47e', '#8abada', '#c09fd9', '#7dc8ba'];
+export function castColor(index: number) {
+  return castColors[index] ?? `hsl(${Math.round((index * 137.508) % 360)}, 52%, 73%)`;
+}
 const voices = [
   {
     label: 'Protective',
@@ -55,6 +58,27 @@ const voices = [
     quote: 'Let’s get everyone around the table.',
   },
 ];
+// Give each saved person consistent sample conversations when the roster is edited.
+export function sampleTemplates(profile: Profile): number[] {
+  return profile.relatives.map((person) => {
+    const original = initialProfile.relatives.findIndex((relative) => relative.id === person.id);
+    if (original !== -1) return original;
+    const notes = person.relationshipState + ' ' + person.grievance;
+    const scores = voices.map((voice) => (notes.match(voice.matches) ?? []).length);
+    const best = Math.max(...scores);
+    if (best) return scores.indexOf(best);
+    const defaults = {
+      parent: 0,
+      partner: 1,
+      child: 1,
+      sibling: 2,
+      cofounder: 2,
+      friend: 4,
+      other: 3,
+    };
+    return defaults[person.relation];
+  });
+}
 export const PersonaSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -64,16 +88,23 @@ export const PersonaSchema = z.object({
   excerpts: z.number().int().nonnegative(),
 });
 export type Persona = z.infer<typeof PersonaSchema>;
-export const RecipeSchema = z.object({
-  version: z.literal(1),
-  profile: MatrixProfile,
-  agents: z.array(PersonaSchema).length(5),
-  sources: z.array(SourceSchema),
-  reference: ReferenceSchema,
-  webEvidence: WebEvidenceSchema.optional(),
-  transport: z.enum(['MCP', 'Local archive']),
-  seed: z.number().int(),
-});
+export const RecipeSchema = z
+  .object({
+    version: z.literal(1),
+    profile: MatrixProfile,
+    agents: z.array(PersonaSchema).min(1),
+    sources: z.array(SourceSchema),
+    reference: ReferenceSchema,
+    webEvidence: WebEvidenceSchema.optional(),
+    transport: z.enum(['MCP', 'Local archive']),
+    seed: z.number().int(),
+  })
+  .refine(
+    (r) =>
+      r.agents.length === r.profile.relatives.length &&
+      r.agents.every((agent, index) => agent.id === r.profile.relatives[index]?.id),
+    'Each person in the circle needs their own agent.',
+  );
 export type Recipe = z.infer<typeof RecipeSchema>;
 export function assignAgents(
   profile: Profile,
@@ -96,12 +127,14 @@ export function assignAgents(
         };
       })
       .sort((a, b) => b.score - a.score);
-    const voice = ranked[0]!.score ? ranked[0]! : { ...voices[i]!, example: excerpts[0] };
+    const voice = ranked[0]!.score
+      ? ranked[0]!
+      : { ...voices[i % voices.length]!, example: excerpts[0] };
     return {
       id: person.id,
       label: voice.label,
       bonding: voice.bonding,
-      quote: voice.example?.text ?? person.grievance,
+      quote: voice.example?.text || person.grievance || person.relationshipState || voice.quote,
       source: voice.example?.source ?? null,
       excerpts: excerpts.length,
     };
@@ -131,7 +164,8 @@ export async function analyze(
   selected: Source[],
   signal: AbortSignal,
 ): Promise<Recipe> {
-  let archives = selected.map((source) => ({ source, threads: exampleThreads(source) }));
+  const templates = sampleTemplates(profile);
+  let archives = selected.map((source) => ({ source, threads: exampleThreads(source, templates) }));
   let reference = bankRelease;
   let webEvidence = cdcRelease;
   let transport: Recipe['transport'] = 'Local archive';
@@ -174,13 +208,20 @@ export async function analyze(
         selected.map(async (source) => {
           const data = await rpc(
             'tools/call',
-            { name: 'list_conversations', arguments: { source } },
+            { name: 'list_conversations', arguments: { source, templates } },
             timed,
           );
           return {
             source,
             threads: z
-              .object({ structuredContent: z.object({ threads: ThreadsSchema }) })
+              .object({
+                structuredContent: z.object({
+                  threads: ThreadsSchema.refine(
+                    (rows) =>
+                      rows.length === templates.length && rows.every((row, i) => row.seat === i),
+                  ),
+                }),
+              })
               .parse(data).structuredContent.threads,
           };
         }),

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useProfileStore } from '../store/profile';
 import { Header, Orbit } from '../matrix/Chrome';
 const lines = ['You were born.', "You don't remember it.", "Let's skip to now."];
 export default function Intro() {
   const navigate = useNavigate();
+  const castSize = useProfileStore((s) => s.profile.relatives.length + 1);
   const [step, setStep] = useState(0);
   useEffect(() => {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -38,8 +40,8 @@ export default function Intro() {
           </div>
           <h1 key={step}>{lines[step]}</h1>
           <p>
-            You and the five people closest to you, across a hundred possible futures. Which life
-            will you recognize?
+            You and the people closest to you, across a hundred possible futures. Which life will
+            you recognize?
           </p>
           <button className="mx-primary" onClick={enter}>
             Begin your simulation <span aria-hidden="true">→</span>
@@ -48,7 +50,10 @@ export default function Intro() {
         <figure className="mx-orbit-frame">
           <Orbit />
           <figcaption>
-            <span className="mx-live-dot" /> Initial conditions <span>6 agents / 100 lives</span>
+            <span className="mx-live-dot" /> Initial conditions{' '}
+            <span>
+              {castSize} {castSize === 1 ? 'agent' : 'agents'} / 100 lives
+            </span>
           </figcaption>
         </figure>
       </main>

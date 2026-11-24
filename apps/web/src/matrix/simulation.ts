@@ -201,7 +201,7 @@ function makeLife(recipe: Recipe, index: number): Life {
     });
     const participants = [...reactions].sort((a, b) => b.initiative - a.initiative);
     const first = participants[0]!.k,
-      second = participants[1]!.k;
+      second = participants[1]?.k;
     const relative_states = agents.map((a, k) => {
       scores[k] = clamp(
         Math.round(
@@ -248,10 +248,18 @@ function makeLife(recipe: Recipe, index: number): Life {
       private_messages: [
         {
           from: agents[first]!.id,
-          to: agents[second]!.id,
+          to: second === undefined ? profile.id : agents[second]!.id,
           text: reactions[first]!.voice.invite,
         },
-        { from: agents[second]!.id, to: agents[first]!.id, text: reactions[second]!.voice.reply },
+        ...(second === undefined
+          ? []
+          : [
+              {
+                from: agents[second]!.id,
+                to: agents[first]!.id,
+                text: reactions[second]!.voice.reply,
+              },
+            ]),
         {
           from: profile.id,
           to: agents[first]!.id,

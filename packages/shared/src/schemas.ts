@@ -39,7 +39,7 @@ export const ProfileSchema = z.object({
     weightKg: z.number().min(25).max(350).optional(),
     sugar: z.number().min(0).max(30).optional(),
   }),
-  relatives: z.array(RelativeSchema).min(1).max(5),
+  relatives: z.array(RelativeSchema).min(1),
   bustUrl: z.string().url().optional(),
   photoUrl: z.string().optional(),
   portraits: z.array(z.string()).max(3).optional(),

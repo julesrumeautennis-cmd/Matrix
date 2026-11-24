@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { castColors, getRecipe, type Recipe } from '../matrix/analysis';
+import { castColor, getRecipe, type Recipe } from '../matrix/analysis';
 import { getLives } from '../matrix/simulation';
 import { Heading, Shell } from '../matrix/Chrome';
 import LifeField from '../matrix/LifeField';
@@ -27,7 +27,7 @@ function FieldPage({ recipe }: { recipe: Recipe }) {
     <Shell step={2}>
       <Heading
         label="Parallel simulation"
-        detail="Each square is one possible life. The six dots are your circle, and a line appears when two people interact."
+        detail="Each square is one possible life. Each dot represents someone in your circle. A line appears when two people interact."
       >
         A hundred lives, <em>in motion.</em>
       </Heading>
@@ -43,7 +43,7 @@ function FieldPage({ recipe }: { recipe: Recipe }) {
         <div className="mx-legend">
           {[recipe.profile.name, ...recipe.profile.relatives.map((a) => a.name)].map((name, i) => (
             <span key={i}>
-              <i style={{ background: castColors[i] }} />
+              <i style={{ background: castColor(i) }} />
               {name}
             </span>
           ))}
