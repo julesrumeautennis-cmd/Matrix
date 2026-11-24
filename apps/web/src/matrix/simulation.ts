@@ -148,9 +148,12 @@ function voiceFor(label: string) {
     ? characterActions[label as keyof typeof characterActions]
     : characterActions.Connector;
 }
-function makeLife(recipe: Recipe, index: number): Life {
+function* simulateChapters(
+  recipe: Recipe,
+  index: number,
+  seed: number,
+): Generator<YearEvent, MatrixLife, void> {
   const { profile, agents, reference } = recipe;
-  const seed = (recipe.seed + Math.imul(index + 1, 2654435761)) >>> 0;
   const rng = makeRng(seed);
   const noise = Math.sqrt(-2 * Math.log(Math.max(0.000001, rng()))) * Math.cos(2 * Math.PI * rng());
   const { sport, sleep, alcohol, sugar = 4 } = profile.habits;
@@ -185,7 +188,8 @@ function makeLife(recipe: Recipe, index: number): Life {
   timeline.sort((a, b) => a[0] - b[0]);
   let previous = profile.age;
   const choices = makeRng(seed ^ 0x51ab2f19);
-  const years: YearEvent[] = chapterMoments.map((fraction, i) => {
+  const years: YearEvent[] = [];
+  for (const [i, fraction] of chapterMoments.entries()) {
     const age = Math.min(
       death - (5 - i),
       Math.max(previous + 1, fictionAge(profile.age, death, fraction)),
@@ -223,7 +227,7 @@ function makeLife(recipe: Recipe, index: number): Life {
         memory_update: memory,
       };
     });
-    return {
+    const chapter: YearEvent = {
       run_id: id,
       year_index: i,
       protagonist_age: age,
@@ -269,7 +273,9 @@ function makeLife(recipe: Recipe, index: number): Life {
         },
       ],
     };
-  });
+    years.push(chapter);
+    yield chapter;
+  }
   const eulogies = agents.map((a, i) => ({
     run_id: id,
     relative_id: a.id,
@@ -296,8 +302,63 @@ function makeLife(recipe: Recipe, index: number): Life {
   RunSchema.parse(run);
   return run;
 }
+export interface LifeFrame {
+  seed: number;
+  chapter?: YearEvent;
+  previous?: YearEvent;
+}
+const cache = new WeakMap<Recipe, MatrixLife[]>();
+
+// Advance the same seeded generators in chapter order, both on screen and for direct result links.
+export class SimulationBatch {
+  readonly totalChapters = population * chapterMoments.length;
+  readonly lives: MatrixLife[] = [];
+  private readonly trials: Generator<YearEvent, MatrixLife, void>[];
+  private readonly frames: LifeFrame[];
+  private completed = 0;
+  private decisions = 0;
+  private messages = 0;
+
+  constructor(private readonly recipe: Recipe) {
+    this.frames = Array.from({ length: population }, (_, i) => ({
+      seed: (recipe.seed + Math.imul(i + 1, 2654435761)) >>> 0,
+    }));
+    this.trials = this.frames.map((frame, i) => simulateChapters(recipe, i, frame.seed));
+  }
+
+  advance(count: number) {
+    const end = Math.min(this.totalChapters, this.completed + count);
+    while (this.completed < end) {
+      const index = this.completed % population;
+      const trial = this.trials[index]!;
+      const step = trial.next();
+      if (step.done) throw Error('A life ended before its last chapter.');
+      const chapter = step.value;
+      const frame = this.frames[index]!;
+      this.frames[index] = { seed: frame.seed, previous: frame.chapter, chapter };
+      this.decisions += chapter.decisions.length;
+      this.messages += chapter.private_messages.length;
+      this.completed++;
+      if (chapter.year_index === chapterMoments.length - 1) {
+        const final = trial.next();
+        if (!final.done) throw Error('The final chapter did not close its life.');
+        this.lives.push(final.value);
+      }
+    }
+    if (this.completed === this.totalChapters) cache.set(this.recipe, this.lives);
+    return {
+      frames: this.frames.slice(),
+      completed: this.completed,
+      decisions: this.decisions,
+      messages: this.messages,
+      finishedLives: this.lives.length,
+    };
+  }
+}
 export function simulate(recipe: Recipe): MatrixLife[] {
-  return Array.from({ length: population }, (_, i) => makeLife(recipe, i));
+  const batch = new SimulationBatch(recipe);
+  batch.advance(batch.totalChapters);
+  return batch.lives;
 }
 export function distribution(lives: MatrixLife[]) {
   const ages = lives.map((r) => r.death_age);
@@ -326,12 +387,7 @@ export function peakLife(bins: ReturnType<typeof distribution>) {
       Math.abs(a.death_age - peak.from - 2) - Math.abs(b.death_age - peak.from - 2),
   )[0]!;
 }
-const cache = new WeakMap<Recipe, MatrixLife[]>();
 export function getLives(recipe: Recipe) {
-  const cached = cache.get(recipe);
-  if (cached) return cached;
-  const lives = simulate(recipe);
-  cache.set(recipe, lives);
-  return lives;
+  return cache.get(recipe) ?? simulate(recipe);
 }
 export const lifeNumber = (r: Run) => r.run_id.split('-').at(-1)!;

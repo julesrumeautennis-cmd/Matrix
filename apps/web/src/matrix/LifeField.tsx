@@ -1,36 +1,46 @@
 import { useEffect, useRef } from 'react';
-import type { Recipe } from './analysis';
-import { castColor } from './analysis';
-import { lifeNumber, type MatrixLife } from './simulation';
+import { castColor, type Recipe } from './analysis';
+import type { LifeFrame } from './simulation';
+
+const columns = (width: number) => (width < 480 ? 8 : width < 900 ? 12 : 16);
 
 export default function LifeField({
   recipe,
-  lives,
-  progress,
+  frames,
+  selected,
+  onSelect,
 }: {
   recipe: Recipe;
-  lives: MatrixLife[];
-  progress: number;
+  frames: LifeFrame[];
+  selected: number;
+  onSelect: (index: number) => void;
 }) {
-  const ref = useRef<HTMLCanvasElement>(null),
-    phase = useRef(progress);
+  const ref = useRef<HTMLCanvasElement>(null);
+  const current = useRef({ frames, selected });
+  const refresh = useRef<(() => void) | undefined>();
   useEffect(() => {
-    phase.current = progress;
-  }, [progress]);
+    current.current = { frames, selected };
+    refresh.current?.();
+  }, [frames, selected]);
+
   useEffect(() => {
     const el = ref.current,
       ctx = el?.getContext('2d');
     if (!el || !ctx) return;
-    const castSize = recipe.agents.length + 1;
+    const ids = [recipe.profile.id, ...recipe.agents.map((a) => a.id)];
+    const seats = new Map(ids.map((id, i) => [id, i]));
+    const colors = ids.map((_, i) => castColor(i));
     const media = matchMedia('(prefers-reduced-motion: reduce)');
     let frame = 0,
       last = -100;
     function draw(now: number) {
       if (!el || !ctx) return;
+      const { frames: tiles, selected: focus } = current.current;
       const width = el.clientWidth,
-        cols = width < 500 ? 8 : width < 900 ? 12 : 16,
+        cols = columns(width),
         size = width / cols;
-      const height = Math.ceil(lives.length / cols) * size,
+      if (!width) return;
+      const height = Math.ceil(tiles.length / cols) * size,
         dpi = Math.min(devicePixelRatio, 1.6);
       if (el.width !== Math.round(width * dpi) || el.height !== Math.round(height * dpi)) {
         el.width = Math.round(width * dpi);
@@ -40,58 +50,63 @@ export default function LifeField({
       ctx.setTransform(dpi, 0, 0, dpi, 0, 0);
       ctx.clearRect(0, 0, width, height);
       const t = media.matches ? 0.8 : now * 0.001;
-      lives.forEach((life, i) => {
+      tiles.forEach((tile, i) => {
         const left = (i % cols) * size + 1,
-          top = Math.floor(i / cols) * size + 1,
-          cx = left + size * 0.48,
-          cy = top + size * 0.49;
-        ctx.fillStyle = i % 7 === 0 ? '#19231b' : '#131a16';
+          top = Math.floor(i / cols) * size + 1;
+        const chapter = tile.chapter,
+          seed = (tile.seed % 533) * 0.029;
+        ctx.fillStyle = i === focus ? '#263823' : chapter ? '#171e18' : '#111712';
         ctx.fillRect(left, top, size - 3, size - 3);
-        const clock = phase.current,
-          chapter = life.years[Math.min(5, Math.floor(clock * 6))]!;
-        const points = Array.from({ length: castSize }, (_, k) => {
-          const seed = (life.seed % 533) * 0.029;
+        if (i === focus) {
+          ctx.strokeStyle = '#c6e99b';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(left + 1, top + 1, size - 5, size - 5);
+        }
+        const motion = chapter ? t : 0;
+        const points = ids.map((_, k) => {
           const angle =
             seed +
-            (k * Math.PI * 2) / castSize +
-            t * (k % 2 ? 0.22 : -0.2) +
-            Math.sin(t * 0.71 + seed + k) * 0.42;
-          const score = k ? chapter.relative_states[k - 1]!.relationship_score : 50;
+            (k * Math.PI * 2) / ids.length +
+            motion * (k % 2 ? 0.22 : -0.2) +
+            Math.sin(motion * 0.71 + seed + k) * 0.42;
+          const score = k ? (chapter?.relative_states[k - 1]?.relationship_score ?? 50) : 50;
           const radius =
             size *
-            ((k ? 0.17 : 0.065) + (100 - score) * 0.00085 + 0.042 * Math.sin(t * 0.9 + seed + k));
-          return [cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius] as const;
+            ((k ? 0.17 : 0.065) +
+              (100 - score) * 0.00085 +
+              0.042 * Math.sin(motion * 0.9 + seed + k));
+          return [
+            left + size * 0.48 + Math.cos(angle) * radius,
+            top + size * 0.49 + Math.sin(angle) * radius,
+          ] as const;
         });
-        const beat = t * 1.05 + i * 0.37;
-        const message =
-          chapter.private_messages[Math.floor(beat) % chapter.private_messages.length]!;
-        const from = recipe.agents.findIndex((a) => a.id === message.from) + 1,
-          to = recipe.agents.findIndex((a) => a.id === message.to) + 1;
-        function line(a: number, b: number, color: string) {
-          ctx!.strokeStyle = color;
-          ctx!.lineWidth = 0.8;
-          ctx!.beginPath();
-          ctx!.moveTo(...points[a]!);
-          ctx!.lineTo(...points[b]!);
-          ctx!.stroke();
+        if (chapter) {
+          const beat = t * 1.05 + i * 0.37;
+          const messages = chapter.private_messages;
+          const message = messages[i === focus ? 0 : Math.floor(beat) % messages.length]!;
+          const from = points[seats.get(message.from)!]!,
+            to = points[seats.get(message.to)!]!;
+          ctx.strokeStyle = 'rgba(211,239,170,.74)';
+          ctx.lineWidth = 0.9;
+          ctx.beginPath();
+          ctx.moveTo(...from);
+          ctx.lineTo(...to);
+          ctx.stroke();
+          const travel = beat % 1;
+          ctx.fillStyle = '#f3f9d4';
+          ctx.beginPath();
+          ctx.arc(
+            from[0] + (to[0] - from[0]) * travel,
+            from[1] + (to[1] - from[1]) * travel,
+            Math.max(1, size * 0.019),
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
         }
-        line(from, to, 'rgba(211,239,170,.69)');
-        if (from && to) line(0, from, 'rgba(205,220,187,.32)');
-        const travel = beat % 1;
-        const a = points[from]!,
-          b = points[to]!;
-        ctx.fillStyle = '#f3f9d4';
-        ctx.beginPath();
-        ctx.arc(
-          a[0] + (b[0] - a[0]) * travel,
-          a[1] + (b[1] - a[1]) * travel,
-          Math.max(1, size * 0.018),
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
+        ctx.globalAlpha = chapter ? 1 : 0.33;
         points.forEach(([x, y], k) => {
-          ctx.fillStyle = castColor(k);
+          ctx.fillStyle = colors[k]!;
           ctx.beginPath();
           ctx.arc(
             x,
@@ -102,15 +117,16 @@ export default function LifeField({
           );
           ctx.fill();
         });
-        if (size > 54) {
-          ctx.fillStyle = '#8f9c90';
+        ctx.globalAlpha = 1;
+        if (size > 51) {
+          ctx.fillStyle = i === focus ? '#d6eabe' : '#8b978c';
           ctx.font = '8px monospace';
-          ctx.fillText(lifeNumber(life), left + 4, top + size - 7);
+          ctx.fillText(String(i + 1).padStart(3, '0'), left + 4, top + size - 6);
         }
       });
     }
     function tick(now: number) {
-      if (now - last > 65) {
+      if (now - last >= 65) {
         draw(now);
         last = now;
       }
@@ -121,22 +137,33 @@ export default function LifeField({
       draw(performance.now());
       if (!media.matches) frame = requestAnimationFrame(tick);
     }
-    const ob = new ResizeObserver(redraw);
-    ob.observe(el);
+    refresh.current = () => draw(performance.now());
+    const observer = new ResizeObserver(redraw);
+    observer.observe(el);
     media.addEventListener('change', redraw);
     redraw();
     return () => {
-      ob.disconnect();
-      cancelAnimationFrame(frame);
+      observer.disconnect();
       media.removeEventListener('change', redraw);
+      cancelAnimationFrame(frame);
+      refresh.current = undefined;
     };
-  }, [recipe, lives]);
+  }, [recipe]);
   return (
     <canvas
       ref={ref}
       className="mx-field"
       role="img"
-      aria-label={`${lives.length} simulated lives, each with ${recipe.agents.length + 1} color-coded agents. Active lines follow their interactions.`}
+      aria-label={`${frames.length} simulated lives, each with ${recipe.agents.length + 1} color-coded agents. Active lines follow their interactions.`}
+      onClick={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect(),
+          cols = columns(rect.width),
+          size = rect.width / cols;
+        const index =
+          Math.floor((event.clientY - rect.top) / size) * cols +
+          Math.floor((event.clientX - rect.left) / size);
+        if (index >= 0 && index < frames.length) onSelect(index);
+      }}
     />
   );
 }

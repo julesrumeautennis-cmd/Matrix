@@ -136,7 +136,8 @@ export function Orbit({ small = false }: { small?: boolean }) {
       last = -100;
     function paint(now: number) {
       if (!el || !ctx) return;
-      const { width: w, height: h } = el.getBoundingClientRect();
+      const w = el.clientWidth,
+        h = el.clientHeight;
       const scale = Math.min(devicePixelRatio || 1, 1.8);
       if (el.width !== Math.round(w * scale) || el.height !== Math.round(h * scale)) {
         el.width = Math.round(w * scale);
