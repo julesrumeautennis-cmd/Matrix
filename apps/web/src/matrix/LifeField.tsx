@@ -58,7 +58,9 @@ export default function LifeField({
             ((k ? 0.17 : 0.065) + (100 - score) * 0.00085 + 0.042 * Math.sin(t * 0.9 + seed + k));
           return [cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius] as const;
         });
-        const message = chapter.private_messages[0]!;
+        const beat = t * 1.05 + i * 0.37;
+        const message =
+          chapter.private_messages[Math.floor(beat) % chapter.private_messages.length]!;
         const from = recipe.agents.findIndex((a) => a.id === message.from) + 1,
           to = recipe.agents.findIndex((a) => a.id === message.to) + 1;
         function line(a: number, b: number, color: string) {
@@ -70,7 +72,20 @@ export default function LifeField({
           ctx!.stroke();
         }
         line(from, to, 'rgba(211,239,170,.69)');
-        line(0, from, 'rgba(205,220,187,.46)');
+        if (from && to) line(0, from, 'rgba(205,220,187,.32)');
+        const travel = beat % 1;
+        const a = points[from]!,
+          b = points[to]!;
+        ctx.fillStyle = '#f3f9d4';
+        ctx.beginPath();
+        ctx.arc(
+          a[0] + (b[0] - a[0]) * travel,
+          a[1] + (b[1] - a[1]) * travel,
+          Math.max(1, size * 0.018),
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
         points.forEach(([x, y], k) => {
           ctx.fillStyle = castColors[k]!;
           ctx.beginPath();

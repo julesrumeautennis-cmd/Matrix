@@ -106,6 +106,48 @@ function outcome(recipe: Recipe, death: number, rng: () => number): LifeOutcome 
 }
 type Life = Run & { life_outcome: LifeOutcome };
 export type MatrixLife = Life;
+const characterActions = {
+  Protective: {
+    reach: 'Brought a meal over',
+    wait: 'Left the porch light on',
+    invite: 'I made enough for everyone. Can you get them here?',
+    reply: 'I will bring something warm.',
+    reason: 'I look after people by doing small things.',
+  },
+  Sentimental: {
+    reach: 'Shared a recording from an old evening',
+    wait: 'Kept a ticket from the last visit',
+    invite: 'I found that recording. Do you think they remember?',
+    reply: 'I kept the picture from that night.',
+    reason: 'I remember exactly who was there.',
+  },
+  Competitive: {
+    reach: 'Suggested a rematch on Saturday',
+    wait: 'Booked the court in case they called',
+    invite: 'One more round this weekend? I will get them out the door.',
+    reply: 'Set a time. I will be there early.',
+    reason: 'We find it easier to talk when we play.',
+  },
+  Reserved: {
+    reach: 'Dropped off something they had repaired',
+    wait: 'Wrote a message and saved the draft',
+    invite: 'I fixed it. Could you let them know when you see them?',
+    reply: 'I can come by quietly on my way home.',
+    reason: 'It is easier for me to show up than to explain.',
+  },
+  Connector: {
+    reach: 'Set a date for the whole table',
+    wait: 'Left an extra seat at dinner',
+    invite: 'I am putting a date on the calendar. Who can come?',
+    reply: 'I will get everyone into one room.',
+    reason: 'Someone has to make the first plan.',
+  },
+};
+function voiceFor(label: string) {
+  return Object.hasOwn(characterActions, label)
+    ? characterActions[label as keyof typeof characterActions]
+    : characterActions.Connector;
+}
 function makeLife(recipe: Recipe, index: number): Life {
   const { profile, agents, reference } = recipe;
   const seed = (recipe.seed + Math.imul(index + 1, 2654435761)) >>> 0;
@@ -142,6 +184,7 @@ function makeLife(recipe: Recipe, index: number): Life {
     ]);
   timeline.sort((a, b) => a[0] - b[0]);
   let previous = profile.age;
+  const choices = makeRng(seed ^ 0x51ab2f19);
   const years: YearEvent[] = chapterMoments.map((fraction, i) => {
     const age = Math.min(
       death - (5 - i),
@@ -149,9 +192,16 @@ function makeLife(recipe: Recipe, index: number): Life {
     );
     const events = timeline.filter(([a]) => a > previous && a <= age).map(([, detail]) => detail);
     previous = age;
-    const first = between(rng, 0, 4),
-      second = (first + between(rng, 1, 4)) % 5;
     const visited = rng() < 0.45 + (record.wellbeing === 'fulfilled' ? 0.18 : 0);
+    const reactions = agents.map((agent, k) => {
+      const voice = voiceFor(agent.label);
+      const initiative = (scores[k]! / 100 + agent.bonding + choices()) / 3;
+      const reaches = initiative > (visited ? 0.43 : 0.55);
+      return { k, initiative, reaches, voice, action: reaches ? voice.reach : voice.wait };
+    });
+    const participants = [...reactions].sort((a, b) => b.initiative - a.initiative);
+    const first = participants[0]!.k,
+      second = participants[1]!.k;
     const relative_states = agents.map((a, k) => {
       scores[k] = clamp(
         Math.round(
@@ -159,17 +209,13 @@ function makeLife(recipe: Recipe, index: number): Life {
             (visited ? 5 : -5) +
             (a.bonding - 0.5) * 6 +
             (rng() - 0.5) * 15 +
-            (k === first ? 2 : 0),
+            (reactions[k]!.reaches ? 3 : -2),
         ),
         0,
         100,
       );
-      const memory =
-        k === first && events[0]
-          ? events[0]
-          : visited
-            ? 'We made time for each other that year.'
-            : 'I kept waiting for a call back.';
+      const recollection = reactions[k]!.action + '.';
+      const memory = k === first && events[0] ? events[0] + ' ' + recollection : recollection;
       return {
         relative_id: a.id,
         relationship_score: scores[k]!,
@@ -192,15 +238,26 @@ function makeLife(recipe: Recipe, index: number): Life {
             : 'Let the call go to voicemail',
           reason: visited ? 'I wanted to be there this time.' : 'I thought we had another week.',
         },
+        ...reactions.map((reaction) => ({
+          actor: agents[reaction.k]!.id,
+          action: reaction.action,
+          reason: reaction.voice.reason,
+        })),
       ],
       relative_states,
       private_messages: [
         {
           from: agents[first]!.id,
           to: agents[second]!.id,
+          text: reactions[first]!.voice.invite,
+        },
+        { from: agents[second]!.id, to: agents[first]!.id, text: reactions[second]!.voice.reply },
+        {
+          from: profile.id,
+          to: agents[first]!.id,
           text: visited
-            ? 'We finally had that evening together.'
-            : 'Have you heard from ' + profile.name + ' this week?',
+            ? 'Keep me a seat. I am on my way.'
+            : 'I read this too late. Can we try next week?',
         },
       ],
     };
